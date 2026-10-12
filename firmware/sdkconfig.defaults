@@ -1,0 +1,20 @@
+# TesserKIT's partition table with a filesystem: two OTA slots, LittleFS for
+# Files (stored backups), a core dump. NVS where the table without one has it.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../../TesserKIT/partitions/tesserkit_4mb_files.csv"
+# A new image rolls back unless it confirms itself (/sys/firmware).
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Crashes leave a core dump, downloadable at /sys/coredump.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+# WebSocket for the interface's subscriptions.
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+# HTTP (7 connections), DNS, downloads.
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+# Size over debuggability, as shipped firmware is built.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# The console's UART also carries the API (the launcher's USB way): the
+# launcher skips log lines, but one written in the middle of a reply breaks it.
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
