@@ -1,6 +1,7 @@
 // Ballet Photophonique (docs/DESIGN.md): five independent PWM outputs on a
 // Gledopto GL-C-611WL, each with its own duty, frequency and resolution,
-// under /outputs, played from a MIDI keyboard under /midi; TesserKIT for
+// under /outputs, played from a MIDI keyboard under /midi, recorded and
+// replayed under /recorder; TesserKIT for
 // Ethernet and Wi-Fi, time, updates from this repository's releases, files
 // and backups, timers, accounts and Art-Net under /sys.
 //
@@ -15,6 +16,7 @@
 #include "photophonique/elements.h"
 #include "TesserKIT.h"
 #include "board.h"
+#include "clip_files.h"
 #include "tesserui/views.h"
 
 #if __has_include("secrets.h")
@@ -28,7 +30,7 @@ tesserkit::System sys(dev);
 tesserkit::Network net(dev);
 tesserkit::Time timekeeper(dev);
 tesserkit::Firmware firmware(dev);
-tesserkit::Files files(dev);  // LittleFS: the stored backups
+tesserkit::Files files(dev);  // LittleFS: the stored backups, the recordings
 tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
@@ -45,6 +47,9 @@ photophonique::Output out[5] = {{photophonique::defaultPwm(), 0, board::kOutputs
                                 {photophonique::defaultPwm(), 4, board::kOutputs[4]}};
 photophonique::Outputs outputs{out, 5};
 photophonique::Midi midi(outputs);
+// Recordings in recordings/*.mid, replayed by the player's task.
+ClipFilesOnFiles clipFiles(files);
+photophonique::Recorder recorder(dev.api(), midi, clipFiles, photophonique::defaultClock());
 
 // The first page (docs/DESIGN.md section 7): the keyboard, which forwards
 // MIDI only while it is on screen, beside what each output does.
@@ -69,6 +74,14 @@ void addViews(tesser::Api& api) {
     }
     card.row().node("/outputs/off").node("/midi/off");
     play.card("Pitch bend").node("/midi/bend");
+
+    // Recording needs the keyboard on screen too.
+    auto& record = views.page("record", "Record").icon("target");
+    record.card("Keyboard").widget("x-midi", "/midi/keys").hint("script", photophonique::elements::kMidiPath);
+    record.card("Recorder")
+        .widget("x-recorder", "/recorder")
+        .hint("script", photophonique::elements::kRecorderPath);
+    record.card("Recordings").node("/recorder/recordings").node("/recorder/upload");
 }
 
 }  // namespace
@@ -105,6 +118,8 @@ extern "C" void app_main() {
     api.mount("midi", midi).label("MIDI").ui("icon", "play");
     namespace el = photophonique::elements;
     dev.web().asset(el::kMidiPath, el::kMidi, sizeof(el::kMidi), "text/javascript", true);
+    api.mount("recorder", recorder).label("Recorder").ui("icon", "target");
+    dev.web().asset(el::kRecorderPath, el::kRecorder, sizeof(el::kRecorder), "text/javascript", true);
     addViews(api);
     // Duties that waited for their channel's period (pwm.h), in TesserKIT's
     // task, under the lock the tree's setters hold.
@@ -116,5 +131,10 @@ extern "C" void app_main() {
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
     dev.begin();  // loads the stored settings
     outputs.begin();
+    {
+        tesser::Lock lock(api);
+        recorder.begin();  // the current recording, from the files mounted by dev.begin()
+    }
+    photophonique::startPlayer(api, recorder);
     serialApi.begin();
 }

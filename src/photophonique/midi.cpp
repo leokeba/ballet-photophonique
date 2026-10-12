@@ -92,12 +92,27 @@ using tesser::Check;
 using tesser::Object;
 using tesser::Status;
 
-// A message packed as status | data1 << 8 | data2 << 16.
-bool unpack(JsonVariantConst v, uint32_t& m) {
+// A message packed as status | data1 << 8 | data2 << 16, or a pair of one and
+// how long ago it was played, [message, ms].
+bool unpack(JsonVariantConst v, uint32_t& m, uint32_t& age) {
+    age = 0;
+    if (v.is<JsonArrayConst>()) {
+        JsonArrayConst pair = v.as<JsonArrayConst>();
+        if (pair.size() != 2 || !pair[1].is<uint32_t>()) return false;
+        age = pair[1].as<uint32_t>();
+        if (age > Midi::kMaxAgeMs) return false;
+        v = pair[0];
+    }
     if (!v.is<uint32_t>()) return false;
     m = v.as<uint32_t>();
     return (m & 0x80) && m <= 0xFFFFFF;
 }
+
+void play(Midi& midi, uint32_t m, uint32_t age) {
+    midi.input(static_cast<uint8_t>(m), static_cast<uint8_t>(m >> 8), static_cast<uint8_t>(m >> 16), age);
+}
+
+constexpr const char* kFormat = "status | data1 << 8 | data2 << 16, or [message, ms ago]";
 
 }  // namespace
 
@@ -145,23 +160,24 @@ void describe(Object& o, Midi& midi) {
 
     o.action("send",
              [&midi](JsonVariantConst body) {
-                 uint32_t m;
+                 uint32_t m, age;
+                 // An array is a batch: a pair is only ever one of its items.
                  if (body.is<JsonArrayConst>()) {
                      JsonArrayConst a = body.as<JsonArrayConst>();
                      for (JsonVariantConst v : a) {
-                         if (!unpack(v, m)) return Check::fail(Status::InvalidValue, "status | data1 << 8 | data2 << 16");
+                         if (!unpack(v, m, age)) return Check::fail(Status::InvalidValue, kFormat);
                      }
                      for (JsonVariantConst v : a) {
-                         unpack(v, m);
-                         midi.message(static_cast<uint8_t>(m), static_cast<uint8_t>(m >> 8), static_cast<uint8_t>(m >> 16));
+                         unpack(v, m, age);
+                         play(midi, m, age);
                      }
                      return Check::ok();
                  }
-                 if (!unpack(body, m)) return Check::fail(Status::InvalidValue, "status | data1 << 8 | data2 << 16");
-                 midi.message(static_cast<uint8_t>(m), static_cast<uint8_t>(m >> 8), static_cast<uint8_t>(m >> 16));
+                 if (!unpack(body, m, age)) return Check::fail(Status::InvalidValue, kFormat);
+                 play(midi, m, age);
                  return Check::ok();
              })
-        .doc("MIDI messages, each packed as status | data1 << 8 | data2 << 16, or an array of them")
+        .doc("MIDI messages, each packed as status | data1 << 8 | data2 << 16 (or [message, ms ago]), or an array of them")
         .ui("hidden");
     o.action("off", [&midi] { midi.allNotesOff(); }).label("All notes off").ui("icon", "stop");
 }

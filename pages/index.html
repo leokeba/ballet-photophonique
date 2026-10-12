@@ -12,9 +12,10 @@
          firmware it serves. A launcher: it opens ?api=, or the controller the
          user picks (TesserUI's DESIGN.md section 9.7). -->
     <script>
-      // midi.js: the MIDI keyboard element, from this page's origin, since
-      // an HTTPS page can't load it from a controller's http:// address.
-      window.TESSER = { launcher: true, title: 'Ballet Photophonique', scripts: ['midi.js'] };
+      // midi.js and recorder.js: the MIDI keyboard and the recorder's
+      // elements, from this page's origin, since an HTTPS page can't load
+      // them from a controller's http:// address.
+      window.TESSER = { launcher: true, title: 'Ballet Photophonique', scripts: ['midi.js', 'recorder.js'] };
     </script>
     <script src="ui.js"></script>
   </body>

@@ -252,7 +252,7 @@ class Midi extends HTMLElement {
     this.#held.clear();
     this.#input = next ?? null;
     if (this.#input) {
-      this.#input.onmidimessage = (e) => this.#message(e.data);
+      this.#input.onmidimessage = (e) => this.#message(e.data, e.timeStamp);
       this.#status(`Playing from ${this.#input.name || 'the keyboard'}.`);
     } else if (this.#access) {
       this.#status('No MIDI input chosen.');
@@ -335,7 +335,11 @@ class Midi extends HTMLElement {
     }
   }
 
-  #message(d) {
+  // `at`: when it was played, on performance.now()'s clock (Web MIDI's
+  // timeStamp is on it too).
+  #message(d, at = performance.now()) {
+    const now = performance.now();
+    if (!(at > 0 && at <= now)) at = now; // a timeStamp on another clock
     const s = d[0];
     const t = s & 0xf0;
     let m = null;
@@ -346,7 +350,7 @@ class Midi extends HTMLElement {
       m = pack(s, d[1], d[2]);
     } else if (t === 0xe0) {
       // Only the latest bend matters.
-      this.#queue = this.#queue.filter((q) => (q & 0xf0) !== 0xe0);
+      this.#queue = this.#queue.filter((q) => (q.m & 0xf0) !== 0xe0);
       m = pack(s, d[1], d[2]);
     } else if (t === 0xb0 && (d[1] === 120 || d[1] === 123)) {
       this.#held.clear();
@@ -357,7 +361,7 @@ class Midi extends HTMLElement {
     led.classList.add('on');
     clearTimeout(this.#led);
     this.#led = setTimeout(() => led.classList.remove('on'), 80);
-    this.#queue.push(m);
+    this.#queue.push({ m, at });
     this.#pump();
     this.#paint();
   }
@@ -365,9 +369,14 @@ class Midi extends HTMLElement {
   async #pump() {
     if (this.#busy || !this.#queue.length || !this.tesser) return;
     this.#busy = true;
-    const batch = this.#queue.splice(0);
+    const now = performance.now();
+    const batch = this.#queue.splice(0).map(({ m, at }) => {
+      const age = Math.min(60000, Math.round(now - at));
+      return age >= 1 ? [m, age] : m;
+    });
     try {
-      await this.tesser.call('/midi/send', batch.length === 1 ? batch[0] : batch);
+      // A pair is only ever an item of a batch.
+      await this.tesser.call('/midi/send', batch.length === 1 && typeof batch[0] === 'number' ? batch[0] : batch);
     } catch (e) {
       this.#status(`Not sent: ${e?.message ?? e?.error ?? e}`, true);
     }

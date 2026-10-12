@@ -15,6 +15,17 @@
 
 namespace photophonique {
 
+// What clients play (/midi/send), heard by the recorder (docs/DESIGN.md
+// section 5.6): each message after it is applied, with how long ago it was
+// played.
+class MidiListener {
+public:
+    virtual void heard(uint8_t status, uint8_t data1, uint8_t data2, uint32_t ageMs) = 0;
+
+protected:
+    ~MidiListener() = default;
+};
+
 class Midi {
 public:
     explicit Midi(Outputs& outs) : outputs_(outs) {
@@ -34,6 +45,14 @@ public:
 
     // One message: a status byte and its data bytes. Channels are ignored.
     void message(uint8_t status, uint8_t data1 = 0, uint8_t data2 = 0);
+    // A message from a client, played `ageMs` ago: applied, then heard by
+    // the listener. Replay calls message() instead, so it isn't recorded.
+    void input(uint8_t status, uint8_t data1, uint8_t data2, uint32_t ageMs = 0) {
+        message(status, data1, data2);
+        if (listener_) listener_->heard(status, data1, data2, ageMs);
+    }
+    void listen(MidiListener* listener) { listener_ = listener; }
+    static constexpr uint32_t kMaxAgeMs = 60000;
     // Turns off every output a note holds.
     void allNotesOff();
 
@@ -64,6 +83,7 @@ private:
     float bend_ = 0;
     tesser::Node* voicesNode_ = nullptr;
     tesser::Node* bendNode_ = nullptr;
+    MidiListener* listener_ = nullptr;
 };
 
 // The /midi tree (docs/DESIGN.md section 6): api.mount("midi", midi).

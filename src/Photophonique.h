@@ -6,4 +6,6 @@
 #include "photophonique/midi.h"
 #include "photophonique/output.h"
 #include "photophonique/pwm.h"
+#include "photophonique/recorder.h"
+#include "photophonique/smf.h"
 #include "photophonique/timing.h"

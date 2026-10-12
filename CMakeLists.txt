@@ -4,7 +4,10 @@ set(PHOTOPHONIQUE_SRCS
     src/photophonique/timing.cpp
     src/photophonique/output.cpp
     src/photophonique/outputs_tree.cpp
-    src/photophonique/midi.cpp)
+    src/photophonique/midi.cpp
+    src/photophonique/smf.cpp
+    src/photophonique/recorder.cpp
+    src/photophonique/recorder_tree.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI, under whatever component name it was added with (a directory
@@ -22,8 +25,9 @@ if(ESP_PLATFORM)
         message(FATAL_ERROR "ballet-photophonique needs TesserAPI as a component")
     endif()
     idf_component_register(SRCS ${PHOTOPHONIQUE_SRCS} src/photophonique/platform/esp/pwm_esp.cpp
+                                src/photophonique/platform/esp/player_esp.cpp
                            INCLUDE_DIRS "src"
-                           PRIV_REQUIRES esp_driver_ledc)
+                           PRIV_REQUIRES esp_driver_ledc esp_timer)
     if(PHOTOPHONIQUE_TESSERAPI)
         idf_component_get_property(lib ${PHOTOPHONIQUE_TESSERAPI} COMPONENT_LIB)
         target_link_libraries(${COMPONENT_LIB} PUBLIC ${lib})
