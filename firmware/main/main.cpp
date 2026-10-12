@@ -75,13 +75,17 @@ void addViews(tesser::Api& api) {
     card.row().node("/outputs/off").node("/midi/off");
     play.card("Pitch bend").node("/midi/bend");
 
-    // Recording needs the keyboard on screen too.
+    // Recording needs the keyboard on screen too. The keyboard and the
+    // recordings side by side, the piano roll across the page under them
+    // ("wide", TesserUI e87ff4d: a hint on the page right after card() goes
+    // on that card; older renderers ignore it).
     auto& record = views.page("record", "Record").icon("target");
     record.card("Keyboard").widget("x-midi", "/midi/keys").hint("script", photophonique::elements::kMidiPath);
+    record.card("Recordings").node("/recorder/recordings").node("/recorder/upload");
     record.card("Recorder")
         .widget("x-recorder", "/recorder")
         .hint("script", photophonique::elements::kRecorderPath);
-    record.card("Recordings").node("/recorder/recordings").node("/recorder/upload");
+    record.hint("wide", true);
 }
 
 }  // namespace
