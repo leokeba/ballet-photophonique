@@ -6,6 +6,13 @@
 //   secure page such as the launcher on GitHub Pages) to /midi/send: notes,
 //   pitch bend, all notes off; one request in flight, what comes meanwhile
 //   batched, a newer bend replacing an unsent one;
+// - plays from the computer's keys, as Ableton Live does, when no MIDI input
+//   is in use (or by choice): A W S E D F T G Y H U J K O L P ; ' are an
+//   octave and a half from C, Z and X move the octave, C and V the velocity.
+//   Physical positions (KeyboardEvent.code), so an AZERTY keyboard plays the
+//   same places, labelled with its own letters where the browser tells them
+//   (Chrome's keyboard layout map, on secure pages; QWERTY's otherwise).
+//   No secure page needed: it works from the controller's own page too;
 // - edits the keys: click one (shift-click: a range, or play keys with Learn
 //   on), then choose its output and, for a single key, its frequency.
 
@@ -16,26 +23,41 @@ const COLORS = ['#e4572e', '#f3a712', '#29bf12', '#00a5cf', '#9b5de5', '#ef476f'
 const BLACK = new Set([1, 3, 6, 8, 10]);
 const W = 14; // a white key's width
 const STORE = 'x-midi:input';
+const STORE_TYPING = 'x-midi:typing';
 const LAUNCHER = 'https://leokeba.github.io/ballet-photophonique/';
+// The computer's keys: semitones above the octave's C, by physical position.
+const TYPING = {
+  KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9,
+  KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16, Quote: 17,
+};
+const OCTAVE_DOWN = 'KeyZ';
+const OCTAVE_UP = 'KeyX';
+const VELOCITY_DOWN = 'KeyC';
+const VELOCITY_UP = 'KeyV';
+const VELOCITIES = [1, 20, 40, 60, 80, 100, 120, 127]; // Ableton's steps
+// Labels without the browser's layout map: QWERTY.
+const QWERTY = (code) => (code.startsWith('Key') ? code.slice(3) : { Semicolon: ';', Quote: "'" }[code] ?? code);
 
 const noteName = (n) => `${NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 const noteHz = (n) => 440 * 2 ** ((n - 69) / 12);
 const hz = (f) => (f >= 1000 ? `${+(f / 1000).toFixed(4)} kHz` : `${+f.toFixed(3)} Hz`);
 const pack = (s, a, b) => s | (a << 8) | (b << 16);
-const store = {
+const local = (key) => ({
   get: () => {
     try {
-      return localStorage.getItem(STORE);
+      return localStorage.getItem(key);
     } catch {
       return null;
     }
   },
   set: (v) => {
     try {
-      localStorage.setItem(STORE, v);
+      localStorage.setItem(key, v);
     } catch {}
   },
-};
+});
+const store = local(STORE);
+const typingChoice = local(STORE_TYPING);
 
 class Midi extends HTMLElement {
   #value = { outputs: [], frequencies: [], voices: [] };
@@ -50,6 +72,13 @@ class Midi extends HTMLElement {
   #busy = false;
   #keys = new Map(); // note → <g>
   #led = 0;
+  #typing = false; // playing from the computer's keys
+  #octave = 60; // the note of the A key: C4
+  #velocity = 100;
+  #pressed = new Map(); // code → the note its key-down played
+  #labels = new Map(); // code → the letter on this layout
+  #onKey = (e) => this.#key(e);
+  #onBlur = () => this.#releaseTyped();
 
   constructor() {
     super();
@@ -85,12 +114,20 @@ class Midi extends HTMLElement {
         .outs button i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
         input[type=number] { width: 9em; }
         .hint { color: var(--muted, #5d6675); font-size: .85em; margin-top: 6px; }
+        .kbd { display: none; font: 600 7px ui-monospace, monospace; }
+        .typing .kbd { display: block; }
+        .w .kbd { fill: var(--muted, #5d6675); } .b .kbd { fill: #cfd3da; }
+        .typinfo { color: var(--muted, #5d6675); font-size: .9em; display: none; }
+        .typing .typinfo { display: inline; }
+        kbd { font: .85em ui-monospace, monospace; border: 1px solid var(--border, #d9dde3); border-radius: 3px; padding: 0 3px; }
       </style>
       <div class="bar">
-        <label>MIDI input <select class="inputs"><option value="">None</option></select></label>
+        <label class="picker">MIDI input <select class="inputs"><option value="">None</option></select></label>
         <span class="led" title="MIDI activity"></span>
         <span class="status"></span>
         <button class="learn" aria-pressed="false" title="Played keys become the selection">Learn</button>
+        <button class="typekeys" aria-pressed="false" title="Play with the computer's keys">Computer keys</button>
+        <span class="typinfo"></span>
       </div>
       <div class="scroll"><svg></svg></div>
       <div class="edit">
@@ -110,16 +147,35 @@ class Midi extends HTMLElement {
     });
     $('.freq').addEventListener('change', (e) => this.#setFrequency(e.target.value === '' ? 0 : +e.target.value));
     $('.reset').addEventListener('click', () => this.#setFrequency(0));
+    $('.typekeys').addEventListener('click', () => {
+      typingChoice.set(this.#typing ? '0' : '1');
+      this.#setTyping(!this.#typing);
+    });
   }
 
   connectedCallback() {
-    if (this.#access || !this.isConnected) return;
+    if (!this.isConnected) return;
+    window.addEventListener('keydown', this.#onKey);
+    window.addEventListener('keyup', this.#onKey);
+    window.addEventListener('blur', this.#onBlur);
+    navigator.keyboard?.getLayoutMap?.().then(
+      (map) => {
+        for (const code of [...Object.keys(TYPING), OCTAVE_DOWN, OCTAVE_UP, VELOCITY_DOWN, VELOCITY_UP]) {
+          const c = map.get(code);
+          if (c) this.#labels.set(code, c.toUpperCase());
+        }
+        this.#paint();
+      },
+      () => {},
+    );
+    this.#setTyping(this.#typingWanted());
+    if (this.#access) return;
     if (!navigator.requestMIDIAccess) {
+      this.$('.picker').hidden = true;
       this.#status(
         window.isSecureContext
-          ? 'This browser has no Web MIDI: use Chrome or Edge.'
-          : `Web MIDI needs a secure page: open this controller from the launcher (${LAUNCHER}).`,
-        true,
+          ? 'This browser has no Web MIDI (Chrome or Edge have it): play with the computer\'s keys.'
+          : `No Web MIDI on this page: play with the computer's keys, or open the controller from the launcher (${LAUNCHER}) for a MIDI keyboard.`,
       );
       return;
     }
@@ -134,6 +190,10 @@ class Midi extends HTMLElement {
   }
 
   disconnectedCallback() {
+    window.removeEventListener('keydown', this.#onKey);
+    window.removeEventListener('keyup', this.#onKey);
+    window.removeEventListener('blur', this.#onBlur);
+    this.#releaseTyped();
     if (this.#input) this.#input.onmidimessage = null;
     if (this.#access) this.#access.onstatechange = null;
     this.#access = null;
@@ -153,6 +213,7 @@ class Midi extends HTMLElement {
   }
   set disabled(d) {
     this.#disabled = !!d;
+    if (this.#disabled) this.#releaseTyped();
     this.#editor();
   }
   set label(_) {}
@@ -180,7 +241,7 @@ class Midi extends HTMLElement {
     const id = inputs.some((i) => i.id === want) ? want : (inputs[0]?.id ?? '');
     sel.value = id;
     this.#use(id, false);
-    if (!inputs.length) this.#status('No MIDI input: plug in a keyboard.');
+    if (!inputs.length) this.#status("No MIDI input: plug in a keyboard, or play with the computer's keys.");
   }
 
   #use(id, chosen) {
@@ -196,7 +257,82 @@ class Midi extends HTMLElement {
     } else if (this.#access) {
       this.#status('No MIDI input chosen.');
     }
+    this.#setTyping(this.#typingWanted());
     this.#paint();
+  }
+
+  // The computer's keys: as last chosen, else when no MIDI input is in use.
+  #typingWanted() {
+    const choice = typingChoice.get();
+    return choice === null ? !this.#input : choice === '1';
+  }
+
+  #setTyping(on) {
+    if (!on) this.#releaseTyped();
+    this.#typing = on;
+    this.$('.typekeys').setAttribute('aria-pressed', String(on));
+    this.shadowRoot.querySelector('.bar').classList.toggle('typing', on);
+    this.$('svg').classList.toggle('typing', on);
+    this.#paint();
+  }
+
+  #key(e) {
+    if (!this.#typing || this.#disabled || e.ctrlKey || e.metaKey || e.altKey) return;
+    // Not while typing in a field, here or anywhere on the page.
+    const t = e.composedPath()[0];
+    if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const down = e.type === 'keydown';
+    const step = TYPING[e.code];
+    if (step !== undefined) {
+      e.preventDefault();
+      if (down) {
+        if (e.repeat || this.#pressed.has(e.code)) return;
+        const n = this.#octave + step;
+        if (n > 127) return;
+        this.#pressed.set(e.code, n);
+        this.#message([0x90, n, this.#velocity]);
+      } else if (this.#pressed.has(e.code)) {
+        // The note its key-down played, whatever the octave is now.
+        this.#message([0x80, this.#pressed.get(e.code), 0]);
+        this.#pressed.delete(e.code);
+      }
+      return;
+    }
+    if (!down || e.repeat) return;
+    if (e.code === OCTAVE_DOWN || e.code === OCTAVE_UP) {
+      e.preventDefault();
+      this.#octave = Math.min(108, Math.max(0, this.#octave + (e.code === OCTAVE_UP ? 12 : -12)));
+      this.#reveal(this.#octave);
+      this.#paint();
+    } else if (e.code === VELOCITY_DOWN || e.code === VELOCITY_UP) {
+      e.preventDefault();
+      const i = VELOCITIES.findIndex((v) => v >= this.#velocity);
+      const j = Math.min(VELOCITIES.length - 1, Math.max(0, (i < 0 ? VELOCITIES.length - 1 : i) + (e.code === VELOCITY_UP ? 1 : -1)));
+      this.#velocity = VELOCITIES[j];
+      this.#paint();
+    }
+  }
+
+  // Note offs for the computer's keys held down: on blur, when typing stops,
+  // when the element goes.
+  #releaseTyped() {
+    for (const n of this.#pressed.values()) this.#message([0x80, n, 0]);
+    this.#pressed.clear();
+  }
+
+  #label(code) {
+    return this.#labels.get(code) ?? QWERTY(code);
+  }
+
+  // Scrolls the keyboard so that `note`'s octave shows.
+  #reveal(note) {
+    const scroll = this.$('.scroll');
+    const g = this.#keys.get(Math.max(LOW, Math.min(HIGH, note)));
+    if (!g) return;
+    const x = +g.querySelector('rect').getAttribute('x') * 1.25;
+    if (x < scroll.scrollLeft || x + 24 * W * 1.25 > scroll.scrollLeft + scroll.clientWidth) {
+      scroll.scrollLeft = Math.max(0, x - 20);
+    }
   }
 
   #message(d) {
@@ -267,6 +403,7 @@ class Midi extends HTMLElement {
       el('rect', { x: kx, y: 0, width: kw, height: kh, rx: 1.5 }, g);
       el('circle', { class: 'dot', cx: kx + kw / 2, cy: kh - 24, r: 3 }, g);
       el('text', { x: kx + kw / 2, y: kh - 6 }, g);
+      el('text', { class: 'kbd', x: kx + kw / 2, y: black ? 10 : 58 }, g);
       el('title', {}, g);
       if (!black) svg.append(g);
       else blacks.push(g);
@@ -333,12 +470,24 @@ class Midi extends HTMLElement {
       g.querySelector('rect').style.fill = o ? COLORS[(o - 1) % COLORS.length] : '';
       g.querySelector('rect').style.fillOpacity = o && !black ? '0.75' : '';
       g.querySelector('text').textContent = o ? String(o) : '';
+      g.querySelector('.kbd').textContent = '';
       g.classList.toggle('held', this.#held.has(n));
       g.classList.toggle('mapped', o > 0);
       g.classList.toggle('sel', this.#selected.has(n));
       g.classList.toggle('sounds', sounding.has(n));
       const f = freqs[n] > 0 ? freqs[n] : noteHz(n);
       g.querySelector('title').textContent = `${noteName(n)} (${n}): ${o ? `output ${o}` : 'no output'}, ${hz(f)}`;
+    }
+    if (this.#typing) {
+      for (const [code, step] of Object.entries(TYPING)) {
+        const g = this.#keys.get(this.#octave + step);
+        if (g) g.querySelector('.kbd').textContent = this.#label(code);
+      }
+      const k = (code) => `<kbd>${this.#label(code)}</kbd>`;
+      const top = Math.min(127, this.#octave + 17);
+      this.$('.typinfo').innerHTML =
+        `${noteName(this.#octave)}–${noteName(top)} ${k(OCTAVE_DOWN)} ${k(OCTAVE_UP)} · ` +
+        `velocity ${this.#velocity} ${k(VELOCITY_DOWN)} ${k(VELOCITY_UP)}`;
     }
     this.#editor();
   }

@@ -25,6 +25,8 @@ TesserAPI, TesserUI and TesserKIT are expected next to this repository (`../Tess
 
 Plug the keyboard into the computer, and open the controller from the launcher, [leokeba.github.io/ballet-photophonique](https://leokeba.github.io/ballet-photophonique/), in Chrome or Edge (Web MIDI needs a secure page, which the controller's own `http://` page isn't). The first page, **Play**, has the keyboard: choose the MIDI input, then click a key (shift-click for a range, or play keys with **Learn**) and give it an output and, if you like, its own frequency. Velocity sets the duty; a new note on an output replaces the one it played; pitch bend moves the frequency or the duty (**Pitch bend**). The keyboard forwards MIDI while the Play page is open.
 
+No MIDI keyboard? Play with the computer's keys, as in Ableton Live: A W S E D F T G Y H U J K O L P ; ' from C, Z and X for the octave, C and V for the velocity (the same physical keys on an AZERTY keyboard). This needs no secure page, so it also works from the controller's own `http://` page, in any browser. The keys turn on by themselves when no MIDI input is in use; **Computer keys** turns them on or off.
+
 ## Updates
 
 Each push to `main` publishes a release (`.github/workflows/release.yml`). The controllers check for one daily and install it from `/sys/firmware/github`, or from the interface. A new board takes `ballet-photophonique-esp32-factory.bin` at offset 0 over USB:

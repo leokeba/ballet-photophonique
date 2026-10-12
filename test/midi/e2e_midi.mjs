@@ -67,6 +67,7 @@ try {
 } catch {}
 const text = await status.textContent();
 check(/Photophonique Test/.test(text), `the element plays from the virtual keyboard ("${text}")`);
+check((await el.locator('button.typekeys').getAttribute('aria-pressed')) === 'false', "the computer's keys stay off while a MIDI input plays");
 const options = await el.locator('select.inputs option').allTextContents();
 console.log('  inputs:', options.join(', '));
 
