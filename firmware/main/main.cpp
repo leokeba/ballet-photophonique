@@ -1,8 +1,8 @@
 // Ballet Photophonique (docs/DESIGN.md): five independent PWM outputs on a
 // Gledopto GL-C-611WL, each with its own duty, frequency and resolution,
-// under /outputs; TesserKIT for Ethernet and Wi-Fi, time, updates from this
-// repository's releases, files and backups, timers, accounts and Art-Net
-// under /sys.
+// under /outputs, played from a MIDI keyboard under /midi; TesserKIT for
+// Ethernet and Wi-Fi, time, updates from this repository's releases, files
+// and backups, timers, accounts and Art-Net under /sys.
 //
 // Flash it and plug in a cable, or join the "ballet-photophonique-xxxx"
 // network from a phone, and the interface opens; or reach it from the
@@ -12,8 +12,10 @@
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
 // WIFI_PASSWORD, and WIFI_TX_POWER (dBm) for boards with a weak supply.
 #include "Photophonique.h"
+#include "photophonique/elements.h"
 #include "TesserKIT.h"
 #include "board.h"
+#include "tesserui/views.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -42,6 +44,32 @@ photophonique::Output out[5] = {{photophonique::defaultPwm(), 0, board::kOutputs
                                 {photophonique::defaultPwm(), 3, board::kOutputs[3]},
                                 {photophonique::defaultPwm(), 4, board::kOutputs[4]}};
 photophonique::Outputs outputs{out, 5};
+photophonique::Midi midi(outputs);
+
+// The first page (docs/DESIGN.md section 7): the keyboard, which forwards
+// MIDI only while it is on screen, beside what each output does.
+void addViews(tesser::Api& api) {
+    static tesserui::Views views(api);
+    auto& play = views.page("play", "Play").icon("play");
+    play.card("Keyboard").widget("x-midi", "/midi/keys").hint("script", photophonique::elements::kMidiPath);
+    static const char* const kLabels[5] = {"Output 1", "Output 2", "Output 3", "Output 4", "Output 5"};
+    static const char* const kOn[5] = {"/outputs/1/on", "/outputs/2/on", "/outputs/3/on", "/outputs/4/on",
+                                       "/outputs/5/on"};
+    static const char* const kHz[5] = {"/outputs/1/applied/frequency", "/outputs/2/applied/frequency",
+                                       "/outputs/3/applied/frequency", "/outputs/4/applied/frequency",
+                                       "/outputs/5/applied/frequency"};
+    static const char* const kDuty[5] = {"/outputs/1/duty", "/outputs/2/duty", "/outputs/3/duty",
+                                         "/outputs/4/duty", "/outputs/5/duty"};
+    auto& card = play.card("Outputs");
+    for (int i = 0; i < 5; i++) {
+        card.row()
+            .widget("toggle", kOn[i], kLabels[i])
+            .widget("readout", kHz[i], "Frequency")
+            .widget("readout", kDuty[i], "Duty");
+    }
+    card.row().node("/outputs/off").node("/midi/off");
+    play.card("Pitch bend").node("/midi/bend");
+}
 
 }  // namespace
 
@@ -72,6 +100,12 @@ extern "C" void app_main() {
 
     auto& api = dev.api();
     api.mount("outputs", outputs).label("Outputs").ui("icon", "bulb");
+    // MIDI from the browser (x-midi, served from flash here and from the
+    // launcher's own page on GitHub Pages).
+    api.mount("midi", midi).label("MIDI").ui("icon", "play");
+    namespace el = photophonique::elements;
+    dev.web().asset(el::kMidiPath, el::kMidi, sizeof(el::kMidi), "text/javascript", true);
+    addViews(api);
     // Duties that waited for their channel's period (pwm.h), in TesserKIT's
     // task, under the lock the tree's setters hold.
     dev.onTick([&api](uint32_t) {

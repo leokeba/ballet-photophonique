@@ -17,9 +17,10 @@ const char* const kLabels[kMaxOutputs] = {"Output 1", "Output 2", "Output 3", "O
 }  // namespace
 
 void describe(Object& o, Output& out) {
-    out.onNode(&o.value("on", [&out] { return out.on(); }, [&out](bool v) { out.setOn(v); })
-                    .persist()
-                    .doc("Off holds the output low"));
+    out.node(&o);
+    o.value("on", [&out] { return out.on(); }, [&out](bool v) { out.setOn(v); })
+        .persist()
+        .doc("Off holds the output low");
     o.value("duty", [&out] { return out.duty(); }, [&out](float v) { out.setDuty(v); })
         .range(0, 100)
         .step(0.1)

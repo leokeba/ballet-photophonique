@@ -41,9 +41,12 @@ public:
     int pin() const { return pin_; }
     int index() const { return index_; }
 
-    // The tree's `on` node, so that All off is announced to subscribers.
-    void onNode(tesser::Node* n) { onNode_ = n; }
-    tesser::Node* onNode() const { return onNode_; }
+    // The output's object in the tree, so that changes made by code (All
+    // off, MIDI) are announced to subscribers: announce() after them.
+    void node(tesser::Node* n) { node_ = n; }
+    void announce() {
+        if (node_) node_->changed();
+    }
 
 private:
     void retime();
@@ -58,7 +61,7 @@ private:
     double frequency_ = kFrequency;
     uint8_t resolution_ = kResolution;
     Timing timing_ = plan(kFrequency, kResolution);
-    tesser::Node* onNode_ = nullptr;
+    tesser::Node* node_ = nullptr;
 };
 
 // The /outputs tree (docs/DESIGN.md section 6): one object per output, named
@@ -70,6 +73,8 @@ struct Outputs {
 
     bool begin();
     void allOff();
+    // Output `n` (1 to count), or null.
+    Output* at(int n) { return n >= 1 && n <= count ? &items[n - 1] : nullptr; }
 };
 
 void describe(tesser::Object& o, Output& out);

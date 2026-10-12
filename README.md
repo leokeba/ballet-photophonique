@@ -7,7 +7,7 @@ It runs on a [Gledopto GL-C-611WL](https://www.gledopto.eu/gledopto-gl-c-611wl-e
 - [TesserKIT](https://github.com/leokeba/TesserKIT): Ethernet, Wi-Fi with a captive portal, time, OTA updates from this repository's releases, files and backups, timers, users and Art-Net, under `/sys`.
 - [TesserAPI](https://github.com/leokeba/TesserAPI) and [TesserUI](https://github.com/leokeba/TesserUI): the device's tree, reachable over HTTP, WebSocket and USB serial, drawn in the browser without UI code.
 
-This repository holds only the outputs: `/outputs/1` to `/outputs/5`, each with `on`, `duty` (%), `frequency` (Hz, fractions allowed) and `resolution` (bits), and `applied/`, what the timer really runs. Frequency and resolution share the timer's budget (`80 MHz / 2^bits` at most), so a combination that doesn't fit gets the nearest one rather than an error.
+This repository holds only the outputs and MIDI: `/outputs/1` to `/outputs/5`, each with `on`, `duty` (%), `frequency` (Hz, fractions allowed) and `resolution` (bits), and `applied/`, what the timer really runs. Frequency and resolution share the timer's budget (`80 MHz / 2^bits` at most), so a combination that doesn't fit gets the nearest one rather than an error.
 
 > **Status:** outputs, tree and host tests done; the firmware runs on the board (outputs not yet measured with a scope); Ethernet and GitHub releases built, not yet tried with a cable. The specification is [docs/DESIGN.md](docs/DESIGN.md).
 
@@ -20,6 +20,10 @@ idf.py -C firmware -B build/idf set-target esp32 build flash               # the
 ```
 
 TesserAPI, TesserUI and TesserKIT are expected next to this repository (`../TesserAPI`, ...), or through `TESSERAPI_PATH`, `TESSERUI_PATH` and `TESSERKIT_PATH`. A gitignored `firmware/main/secrets.h` may define `WIFI_SSID` and `WIFI_PASSWORD` for development; without it, a fresh controller opens an access point named `ballet-photophonique-xxxx` with a captive portal.
+
+## Playing from a MIDI keyboard
+
+Plug the keyboard into the computer, and open the controller from the launcher, [leokeba.github.io/ballet-photophonique](https://leokeba.github.io/ballet-photophonique/), in Chrome or Edge (Web MIDI needs a secure page, which the controller's own `http://` page isn't). The first page, **Play**, has the keyboard: choose the MIDI input, then click a key (shift-click for a range, or play keys with **Learn**) and give it an output and, if you like, its own frequency. Velocity sets the duty; a new note on an output replaces the one it played; pitch bend moves the frequency or the duty (**Pitch bend**). The keyboard forwards MIDI while the Play page is open.
 
 ## Updates
 

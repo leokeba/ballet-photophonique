@@ -3,7 +3,8 @@
 set(PHOTOPHONIQUE_SRCS
     src/photophonique/timing.cpp
     src/photophonique/output.cpp
-    src/photophonique/outputs_tree.cpp)
+    src/photophonique/outputs_tree.cpp
+    src/photophonique/midi.cpp)
 
 if(ESP_PLATFORM)
     # TesserAPI, under whatever component name it was added with (a directory

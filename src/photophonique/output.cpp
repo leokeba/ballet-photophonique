@@ -52,7 +52,7 @@ bool Outputs::begin() {
 void Outputs::allOff() {
     for (int i = 0; i < count; i++) {
         items[i].setOn(false);
-        if (items[i].onNode()) items[i].onNode()->changed();
+        items[i].announce();
     }
 }
 

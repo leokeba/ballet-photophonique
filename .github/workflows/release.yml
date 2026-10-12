@@ -81,7 +81,7 @@ jobs:
         working-directory: TesserUI/web
         run: pnpm install --frozen-lockfile && pnpm build
       - name: Site
-        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js web/elements/midi.js _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
