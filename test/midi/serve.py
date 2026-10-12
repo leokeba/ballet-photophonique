@@ -1,15 +1,20 @@
 # The launcher as GitHub Pages serves it, on localhost (a secure context, for
 # Web MIDI), with /api proxied to a controller so the page reaches it
-# same-origin over HTTP, as the Pages launcher does by address.
-# usage: serve.py PORT NODE_URL INDEX_HTML UI_JS MIDI_JS
+# same-origin over HTTP, as the Pages launcher does by address. The elements
+# (midi.js, recorder.js...) are served by their file names. A streamed
+# subscription (?sub) is answered with a plain value, which the page takes as
+# "no stream" and polls: this proxy relays whole responses only.
+# usage: serve.py PORT NODE_URL INDEX_HTML UI_JS ELEMENT_JS...
 import http.server
+import os
 import sys
 import urllib.error
 import urllib.request
 
-port, node, index, ui, midi = int(sys.argv[1]), sys.argv[2].rstrip("/"), *sys.argv[3:6]
-files = {"/": (index, "text/html"), "/index.html": (index, "text/html"),
-         "/ui.js": (ui, "text/javascript"), "/midi.js": (midi, "text/javascript")}
+port, node, index, ui = int(sys.argv[1]), sys.argv[2].rstrip("/"), sys.argv[3], sys.argv[4]
+files = {"/": (index, "text/html"), "/index.html": (index, "text/html"), "/ui.js": (ui, "text/javascript")}
+for element in sys.argv[5:]:
+    files["/" + os.path.basename(element)] = (element, "text/javascript")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -24,6 +29,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _proxy(self):
+        query = self.path.partition("?")[2].split("&")
+        if self.command == "GET" and "sub" in query:
+            return self._send(200, "application/json", b"null")
         n = int(self.headers.get("Content-Length") or 0)
         data = self.rfile.read(n) if n else None
         req = urllib.request.Request(node + self.path, data=data, method=self.command)
