@@ -52,6 +52,9 @@ const play = async (cmd) => {
 const browser = await chromium.launch({ headless: !headed });
 const context = await browser.newContext();
 await context.grantPermissions(['midi', 'midi-sysex'], { origin: new URL(pageUrl).origin });
+// The Pages launcher reaching a controller by address: Chrome's Local Network
+// Access, where this Playwright knows it.
+await context.grantPermissions(['local-network-access'], { origin: new URL(pageUrl).origin }).catch(() => {});
 const page = await context.newPage();
 page.on('console', (m) => m.type() === 'error' && console.log('  console:', m.text()));
 await page.goto(pageUrl);
