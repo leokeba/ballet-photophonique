@@ -18,8 +18,13 @@ public:
     virtual bool attach(int index, int pin) = 0;
     // The output's timer: clock, divider and resolution, applied together.
     virtual void timing(int index, const Timing& t) = 0;
-    // The compare value, 0 to 2^bits of the last timing.
+    // The compare value, 0 to 2^bits of the last timing. It takes effect at
+    // the end of the current period; one written while an earlier one still
+    // waits for its period is kept, and applied by poll().
     virtual void duty(int index, uint32_t counts) = 0;
+    // Applies the duties that were waiting. Often (every TesserKIT tick),
+    // under the same lock as the other calls.
+    virtual void poll() {}
 };
 
 // The classic ESP32 has 8 timers (4 high-speed, 4 low-speed): outputs 0–3 on

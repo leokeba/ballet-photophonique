@@ -1,6 +1,6 @@
 # Ballet Photophonique design
 
-Status: phase 0 (2026-10-12): five outputs with duty, frequency and resolution, their tree and host tests; the firmware builds for the Gledopto GL-C-611WL with TesserKIT's services. This is the specification the code follows; when the two disagree, fix one of them. Sections marked *(later)* are committed to but not built yet.
+Status: phase 0 (2026-10-12): five outputs with duty, frequency and resolution, their tree and host tests; the firmware runs on the Gledopto GL-C-611WL with TesserKIT's services (flashed over USB, on Wi-Fi), outputs set over HTTP and serial but not yet turned on or measured. This is the specification the code follows; when the two disagree, fix one of them. Sections marked *(later)* are committed to but not built yet.
 
 Ballet Photophonique's controller drives five PWM outputs, each with its own duty cycle, frequency and resolution, set from a web interface, over Art-Net, or from any TesserAPI client. It is an application of [TesserKIT](https://github.com/leokeba/TesserKIT) on [TesserAPI](https://github.com/leokeba/TesserAPI) and [TesserUI](https://github.com/leokeba/TesserUI), like [tiny-heliostat](https://github.com/leokeba/tiny-heliostat).
 
@@ -67,7 +67,7 @@ Everything but `pwm_esp` is platform-free and host-tested.
 
 ### 4.2 Tasks and locks
 
-There is no task of our own. The tree's setters run in whichever task handles the request (httpd, the UART reader, TesserKIT's task for Art-Net and Timers), under TesserAPI's lock, and write LEDC registers directly: a few register writes, no waiting. Nothing else touches an output.
+There is no task of our own. The tree's setters run in whichever task handles the request (httpd, the UART reader, TesserKIT's task for Art-Net and Timers), under TesserAPI's lock, and write LEDC registers directly: a few register writes, never waiting (§5.3). A duty that must wait for its channel's period is applied by `Pwm::poll()`, called from TesserKIT's tick (`dev.onTick`, every 20 ms) under the same lock. Nothing else touches an output.
 
 ## 5. Behaviour
 
@@ -100,6 +100,8 @@ frequency = clock · 256 / (divider · 2^bits)      divider: 256 … 262143 (1.0
 
 - Output `i` uses LEDC timer and channel `i mod 4` of the high-speed group for `i < 4`, of the low-speed group after: five independent timers, three left.
 - `ledc_timer_config()` takes whole hertz and computes its own divider, so it only sets a timer up (APB, 10 bits, 1 kHz, which also makes APB the low-speed group's slow clock). `plan()`'s divider, resolution and clock are then written with ESP-IDF's low-level layer (`ledc_ll_set_clock_divider`, `ledc_ll_set_duty_resolution`, `ledc_ll_set_clock_source`, and `ledc_ll_ls_timer_update` for the low-speed group). The driver reads the resolution back from the register for its duty checks, so `ledc_set_duty()` stays usable.
+- **A duty takes effect at the end of the period.** On the classic ESP32, `ledc_update_duty()` then spins, in a critical section, until the previous duty was applied: at 0.5 Hz that outlasts the interrupt watchdog, and the board panicked (2026-10-12, at boot too, from the stored state). So `duty()` writes only when the channel's `duty_start` bit is clear, and otherwise keeps the latest value for `poll()`. At low frequencies a duty change thus shows within two periods; intermediate values sent within one period are dropped, the latest wins.
+- **A resolution change restarts the period** (`ledc_timer_rst`): a counter already past the new top would otherwise run on to the 20-bit wrap, minutes on the 1 MHz tick. Frequency changes keep the period running.
 - The low-level layer isn't a stable API. Built against ESP-IDF 6.1-dev (`esp_hal_ledc`); not yet against 5.5, TesserKIT's CI image, where `hal/ledc_ll.h` lives in the `hal` component: check it when moving ESP-IDF.
 
 ### 5.4 Art-Net
@@ -142,13 +144,13 @@ TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a d
 ## 10. Testing
 
 1. **Host tests** (CMake, ASan, UBSan, `build/photophonique_tests`): `plan()` against hand-computed dividers (ESP-IDF's 5 kHz, 13-bit example), fractional frequencies, the resolution lowered and raised, a sweep of every frequency and resolution landing within one divider step; duty rounding; outputs on the fake PWM (stored until begun, rescaled duty, All off, a refused pin); the tree (ranges, patches in either order, persistence and restore).
-2. **On the board** *(later)*: `test/e2e_outputs.py` over HTTP, and a scope on the terminals: frequency and duty against `applied/`, at the limits of each clock.
+2. **On the board:** done by hand on 2026-10-12, outputs off: writes over HTTP and serial across both clocks, both speed groups and periods up to 1000 s, with no reset; a stored 0.5 Hz state boots. *(later)* `test/e2e_outputs.py`, and a scope on the terminals: frequency and duty against `applied/`, at the limits of each clock, and a duty change at low frequency arriving within two periods.
 
 ## 11. Roadmap
 
 | Phase | Content | Acceptance |
 |---|---|---|
-| 0 *(built)* | Repository, outputs, tree, host tests, firmware with TesserKIT's services | Host tests green; the firmware builds (1.08 MB, 38 % of the slot free) |
+| 0 *(built)* | Repository, outputs, tree, host tests, firmware with TesserKIT's services | Host tests green; the firmware builds (1.09 MB, 38 % of the slot free), boots on the board, and takes writes at every frequency and resolution without a reset |
 | 1 | On the board: first flash over USB, outputs measured with a scope, Art-Net from a console | Each output's frequency and duty within a divider step of `applied/` |
 | 2 | Ethernet (TesserKIT), the Function button, releases from GitHub | The controller on a show network without Wi-Fi |
 

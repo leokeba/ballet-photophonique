@@ -63,18 +63,45 @@ public:
         if (index < 0 || index >= kMaxOutputs) return;
         Slot s = slot(index);
         ledc_dev_t* hw = LEDC_LL_GET_HW(0);
+        uint32_t bits = 0;
+        ledc_ll_get_duty_resolution(hw, s.mode, s.timer, &bits);
         ledc_ll_set_clock_divider(hw, s.mode, s.timer, t.divider);
         ledc_ll_set_duty_resolution(hw, s.mode, s.timer, t.bits);
         ledc_ll_set_clock_source(hw, s.mode, s.timer, t.clock == Clock::Apb ? LEDC_APB_CLK : LEDC_REF_TICK);
         if (s.mode == LEDC_LOW_SPEED_MODE) ledc_ll_ls_timer_update(hw, s.mode, s.timer);
+        // A counter already past the new top would run on to the 20-bit wrap:
+        // minutes on a slow clock. A new period starts instead.
+        if (bits != t.bits) ledc_timer_rst(s.mode, s.timer);
     }
 
+    // ESP32's LEDC applies a duty at the end of the period, and
+    // ledc_update_duty() spins in a critical section until the previous one
+    // was applied: at 0.5 Hz, longer than the interrupt watchdog allows. So a
+    // duty is only written once the channel's previous one is done; until
+    // then the latest waits here, for poll().
     void duty(int index, uint32_t counts) override {
         if (index < 0 || index >= kMaxOutputs) return;
-        Slot s = slot(index);
-        ledc_set_duty(s.mode, s.channel, counts);
-        ledc_update_duty(s.mode, s.channel);
+        waiting_[index] = true;
+        counts_[index] = counts;
+        flush(index);
     }
+
+    void poll() override {
+        for (int i = 0; i < kMaxOutputs; i++) flush(i);
+    }
+
+private:
+    void flush(int index) {
+        if (!waiting_[index]) return;
+        Slot s = slot(index);
+        if (LEDC_LL_GET_HW(0)->channel_group[s.mode].channel[s.channel].conf1.duty_start) return;
+        ledc_set_duty(s.mode, s.channel, counts_[index]);
+        ledc_update_duty(s.mode, s.channel);
+        waiting_[index] = false;
+    }
+
+    bool waiting_[kMaxOutputs] = {};
+    uint32_t counts_[kMaxOutputs] = {};
 };
 
 }  // namespace

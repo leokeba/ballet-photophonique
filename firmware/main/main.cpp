@@ -64,7 +64,14 @@ extern "C" void app_main() {
         }
     }
 
-    dev.api().mount("outputs", outputs).label("Outputs").ui("icon", "bulb");
+    auto& api = dev.api();
+    api.mount("outputs", outputs).label("Outputs").ui("icon", "bulb");
+    // Duties that waited for their channel's period (pwm.h), in TesserKIT's
+    // task, under the lock the tree's setters hold.
+    dev.onTick([&api](uint32_t) {
+        tesser::Lock lock(api);
+        photophonique::defaultPwm().poll();
+    });
 
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
     dev.begin();  // loads the stored settings
