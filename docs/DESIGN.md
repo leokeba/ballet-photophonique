@@ -1,6 +1,6 @@
 # Ballet Photophonique design
 
-Status: phase 0 (2026-10-12): five outputs with duty, frequency and resolution, their tree and host tests; the firmware runs on the Gledopto GL-C-611WL with TesserKIT's services (flashed over USB, on Wi-Fi), outputs set over HTTP and serial but not yet turned on or measured. This is the specification the code follows; when the two disagree, fix one of them. Sections marked *(later)* are committed to but not built yet.
+Status: phase 0 (2026-10-12): five outputs with duty, frequency and resolution, their tree and host tests; the firmware runs on the Gledopto GL-C-611WL with TesserKIT's services (flashed over USB, on Wi-Fi), outputs set over HTTP and serial but not yet turned on or measured. Ethernet and updates from this repository's GitHub releases since 2026-10-12 (§8). This is the specification the code follows; when the two disagree, fix one of them. Sections marked *(later)* are committed to but not built yet.
 
 Ballet Photophonique's controller drives five PWM outputs, each with its own duty cycle, frequency and resolution, set from a web interface, over Art-Net, or from any TesserAPI client. It is an application of [TesserKIT](https://github.com/leokeba/TesserKIT) on [TesserAPI](https://github.com/leokeba/TesserAPI) and [TesserUI](https://github.com/leokeba/TesserUI), like [tiny-heliostat](https://github.com/leokeba/tiny-heliostat).
 
@@ -9,7 +9,7 @@ Ballet Photophonique's controller drives five PWM outputs, each with its own dut
 - **Five independent outputs.** Each output has its own timer, so its frequency and resolution never depend on another's. Two outputs at 440 and 440.5 Hz beat at 0.5 Hz.
 - **Frequencies as asked, to a fraction of a hertz.** The timer's divider is computed here, not by ESP-IDF's driver, which takes whole hertz (§5.2). What the timer really runs is shown beside what was asked.
 - **No combination refused.** A frequency and a resolution that don't fit together give the nearest the timer can do, so a console sweeping a frequency over Art-Net never sees a write refused.
-- **Only the outputs live here.** Wi-Fi, time, updates, backups, timers, users and Art-Net are TesserKIT's (`/sys`); the tree and the interface are TesserAPI's and TesserUI's. A gap in a library is fixed there (§9), not worked around here.
+- **Only the outputs live here.** Ethernet and Wi-Fi, time, updates, backups, timers, users and Art-Net are TesserKIT's (`/sys`); the tree and the interface are TesserAPI's and TesserUI's. A gap in a library is fixed there (§9), not worked around here.
 - **Host-tested.** The timer arithmetic, the outputs and the tree run on the host with sanitizers, against a fake PWM (§10).
 
 ### Non-goals
@@ -37,12 +37,13 @@ Ballet Photophonique's controller drives five PWM outputs, each with its own dut
 | Outputs 1–5 | 18, 16, 12, 4, 2 | The terminals in the order printed on the case (`V+ IO18 IO16 IO12 IO4 IO2`). Low-side switches: high is on. |
 | Function button | 17 | Not used yet *(later)*. |
 | Spare terminal (IO13) | 13 | Not used. |
-| Ethernet LAN8720 | RMII 19, 21, 22, 25, 26, 27; MDC 23, MDIO 33; PHY address 1; clock in on GPIO 0; oscillator enable GPIO 5 | WLED's "Gledopto Series With Ethernet" board (`wled00/network.cpp`). Not used until TesserKIT has Ethernet (§9). |
+| Ethernet LAN8720 | RMII 19, 21, 22, 25, 26, 27; MDC 23, MDIO 33; PHY address 1; clock in on GPIO 0; oscillator enable GPIO 5 | WLED's "Gledopto Series With Ethernet" board (`wled00/network.cpp`), TesserKIT's `tesserkit::boards::gledopto()`. |
 | PDM microphone | data 32, clock 15 | Not used. |
 
 - GPIO 12 and 2 are strapping pins: the board holds them low at reset, and the outputs are attached only after boot.
 - How fast the board's output stages switch is not documented: low-side MOSFETs on LED controllers are typically made for a few kHz to tens of kHz. Higher frequencies are produced by the chip but may not reach the terminals cleanly *(to measure with a scope)*.
-- The pins are constants in `firmware/main/board.h`.
+- The pins are constants in `firmware/main/board.h`; the Ethernet wiring is TesserKIT's preset.
+- **Ethernet** (`net.ethernet(tesserkit::boards::gledopto())`, `/sys/network/ethernet`): preferred to Wi-Fi while it has an address, the station joining only without one (TesserKIT DESIGN §5.2). A controller on a cable with no Wi-Fi settings opens its access point only after 15 s without an address.
 
 ## 4. Architecture
 
@@ -102,7 +103,7 @@ frequency = clock · 256 / (divider · 2^bits)      divider: 256 … 262143 (1.0
 - `ledc_timer_config()` takes whole hertz and computes its own divider, so it only sets a timer up (APB, 10 bits, 1 kHz, which also makes APB the low-speed group's slow clock). `plan()`'s divider, resolution and clock are then written with ESP-IDF's low-level layer (`ledc_ll_set_clock_divider`, `ledc_ll_set_duty_resolution`, `ledc_ll_set_clock_source`, and `ledc_ll_ls_timer_update` for the low-speed group). The driver reads the resolution back from the register for its duty checks, so `ledc_set_duty()` stays usable.
 - **A duty takes effect at the end of the period.** On the classic ESP32, `ledc_update_duty()` then spins, in a critical section, until the previous duty was applied: at 0.5 Hz that outlasts the interrupt watchdog, and the board panicked (2026-10-12, at boot too, from the stored state). So `duty()` writes only when the channel's `duty_start` bit is clear, and otherwise keeps the latest value for `poll()`. At low frequencies a duty change thus shows within two periods; intermediate values sent within one period are dropped, the latest wins.
 - **A resolution change restarts the period** (`ledc_timer_rst`): a counter already past the new top would otherwise run on to the 20-bit wrap, minutes on the 1 MHz tick. Frequency changes keep the period running.
-- The low-level layer isn't a stable API. Built against ESP-IDF 6.1-dev (`esp_hal_ledc`); not yet against 5.5, TesserKIT's CI image, where `hal/ledc_ll.h` lives in the `hal` component: check it when moving ESP-IDF.
+- The low-level layer isn't a stable API. Built against ESP-IDF 6.1-dev (`esp_hal_ledc`) and 5.5 (the release workflow's image, where `hal/ledc_ll.h` lives in the `hal` component). `LEDC_LL_GET_HW()` takes a group from 6.0 on, so the registers are reached as `&LEDC` (`soc/ledc_struct.h`, the same in both). Check it when moving ESP-IDF.
 
 ### 5.4 Art-Net
 
@@ -128,16 +129,19 @@ Persisted nodes are marked *(p)*. Reads are public; writes to `/outputs` need `U
 
 TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a duty slider, frequency entry, a resolution slider and the applied values beside them. *(later)* A view with the five outputs side by side, once used.
 
-## 8. Persistence and first flash
+## 8. Persistence, first flash and updates
 
 - TesserAPI persistence in NVS: one record (`outputs`), debounced 2 s. Stored backups in `Files` (LittleFS).
-- **Partition table:** TesserKIT's `tesserkit_4mb_files.csv` (two 1.75 MB OTA slots, LittleFS for `Files`, a core dump). The first flash is over USB (bootloader too: rollback is a bootloader setting); updates are OTA after that. Gledopto's WLED is kept in `.local/` (gitignored) to restore with `esptool write-flash 0`.
+- **Partition table:** TesserKIT's `tesserkit_4mb_files.csv` (two 1.75 MB OTA slots, LittleFS for `Files`, a core dump). The first flash is over USB (bootloader too: rollback is a bootloader setting), with `ballet-photophonique-esp32-factory.bin` at 0x0 or `idf.py flash`; updates are OTA after that. Gledopto's WLED is kept in `.local/` (gitignored) to restore with `esptool write-flash 0`.
+- **Releases:** each push to `main` runs the host tests, then TesserKIT's reusable `firmware.yml` builds the firmware against the libraries' `main` branches (its ESP-IDF 5.5 image) and publishes `vX.Y.Z` (the last tag's patch raised) with `ballet-photophonique-esp32.bin` and `ballet-photophonique-esp32-factory.bin`. `[skip ci]` in a commit message releases nothing.
+- **Updates:** `firmware.github("leokeba/ballet-photophonique", "ballet-photophonique-{target}.bin")`: the controller checks for a newer release a minute after coming online, then daily and on demand, and installs it from `/sys/firmware/github` (or the interface); a new image confirms itself after a minute online, else it rolls back (TesserKIT DESIGN §5.4). Uploads (`/sys/firmware/image`) and URLs work too.
+- **Launcher:** the same workflow publishes TesserUI's launcher, built from the TesserUI the firmware has, to GitHub Pages: https://leokeba.github.io/ballet-photophonique/. It reaches a controller over USB (the API on UART 0) or by its address (`dev.cors("https://leokeba.github.io")`), with no network in common needed for USB.
 
 ## 9. Requests to other layers
 
 | Request | Layer | For | Status |
 |---|---|---|---|
-| Ethernet: RMII with a LAN8720 (address, MDC, MDIO, clock mode and pin, power pin), beside Wi-Fi, under `/sys/network/ethernet` | TesserKIT | the GL-C-611WL's port, for a show network (§3) | *(later)* in TesserKIT DESIGN §5.2: to ask |
+| Ethernet: RMII with a LAN8720 (address, MDC, MDIO, clock mode and pin, power pin), beside Wi-Fi, under `/sys/network/ethernet` | TesserKIT | the GL-C-611WL's port, for a show network (§3) | done, TesserKIT 627088b (`boards::gledopto()`); not yet tried with a cable |
 | More than 8 Art-Net mappings (a duty and a frequency per output is 10) | TesserKIT | §5.4 | to ask |
 | A PWM output part with runtime frequency and resolution, if another device needs one | TesserMotion | `Pwm` and `Output` | not asked: TesserMotion's `Pwm` attaches at a fixed frequency; this repository's stays here until a second user |
 
@@ -151,14 +155,15 @@ TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a d
 | Phase | Content | Acceptance |
 |---|---|---|
 | 0 *(built)* | Repository, outputs, tree, host tests, firmware with TesserKIT's services | Host tests green; the firmware builds (1.09 MB, 38 % of the slot free), boots on the board, and takes writes at every frequency and resolution without a reset |
-| 1 | On the board: first flash over USB, outputs measured with a scope, Art-Net from a console | Each output's frequency and duty within a divider step of `applied/` |
-| 2 | Ethernet (TesserKIT), the Function button, releases from GitHub | The controller on a show network without Wi-Fi |
+| 1 | Outputs measured with a scope, Art-Net from a console | Each output's frequency and duty within a divider step of `applied/` |
+| 2 *(built)* | Ethernet (TesserKIT), releases from GitHub, the launcher on Pages | The controller on a show network without Wi-Fi, updated from a release. Built: 1.27 MB on ESP-IDF 6.1-dev (27 % of the slot free), 1.29 MB on 5.5 |
+| 3 | The Function button | |
 
 ## 12. Open questions
 
 - Is Art-Net the show's control, or something else (OSC, MQTT, TouchDesigner over WebSocket)? Which channels for which settings?
 - Should outputs restore their last state after a power cut (now: yes, `on` is persisted), or always boot dark?
-- The repository's home and license (public and MIT like its siblings?), and the GitHub repository for releases (`firmware.github()`).
+- The license (MIT like its siblings?). The repository is public at https://github.com/leokeba/ballet-photophonique.
 - What frequencies the show needs: the board's output stages limit how high the terminals follow (§3).
 
 ## 13. Decisions
@@ -167,3 +172,4 @@ TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a d
 - **One timer per output** (2026-10-12): independent frequencies and resolutions; five of the ESP32's eight timers.
 - **The divider computed here** (2026-10-12): fractional hertz, and the frequency actually run, known before it is applied.
 - **Requests never refused as a pair; the nearest timing applied and shown** (2026-10-12).
+- **Ethernet, GitHub releases and the launcher on Pages** (Leo, 2026-10-12), as tiny-heliostat and TesserKIT do.

@@ -16,13 +16,10 @@ constexpr int kButton = 17;
 // The spare terminal for DIY use. Not used yet.
 constexpr int kSpare = 13;
 
-// LAN8720 over RMII (fixed: TXD0 19, TX_EN 21, TXD1 22, RXD0 25, RXD1 26,
-// CRS_DV 27), not used until TesserKIT has Ethernet (DESIGN section 9).
-constexpr int kEthAddress = 1;
-constexpr int kEthPower = 5;  // enables the PHY's 50 MHz oscillator
-constexpr int kEthMdc = 23;
-constexpr int kEthMdio = 33;
-constexpr int kEthClockIn = 0;  // the oscillator's clock into GPIO 0
+// Ethernet: a LAN8720 over RMII (fixed: TXD0 19, TX_EN 21, TXD1 22, RXD0 25,
+// RXD1 26, CRS_DV 27), at address 1, MDC 23, MDIO 33, its 50 MHz oscillator
+// powered by GPIO 5 and clocking GPIO 0: TesserKIT's
+// tesserkit::boards::gledopto(), which main.cpp passes to Network.
 
 // PDM microphone on I2S. Not used.
 constexpr int kMicData = 32;

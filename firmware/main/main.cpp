@@ -1,12 +1,13 @@
 // Ballet Photophonique (docs/DESIGN.md): five independent PWM outputs on a
 // Gledopto GL-C-611WL, each with its own duty, frequency and resolution,
-// under /outputs; TesserKIT for Wi-Fi, time, updates, files and backups,
-// timers, accounts and Art-Net under /sys.
+// under /outputs; TesserKIT for Ethernet and Wi-Fi, time, updates from this
+// repository's releases, files and backups, timers, accounts and Art-Net
+// under /sys.
 //
-// Flash it, join the "ballet-photophonique-xxxx" network from a phone, and
-// the interface opens; or reach it from TesserUI's launcher
-// (https://leokeba.github.io/TesserKIT/): over USB, or by its address. A fresh
-// controller boots with every output off.
+// Flash it and plug in a cable, or join the "ballet-photophonique-xxxx"
+// network from a phone, and the interface opens; or reach it from the
+// launcher (https://leokeba.github.io/ballet-photophonique/): over USB, or by
+// its address. A fresh controller boots with every output off.
 //
 // For development, a gitignored main/secrets.h may define WIFI_SSID and
 // WIFI_PASSWORD, and WIFI_TX_POWER (dBm) for boards with a weak supply.
@@ -51,7 +52,12 @@ extern "C" void app_main() {
 #if defined(WIFI_TX_POWER)
     net.txPower(WIFI_TX_POWER);
 #endif
+    // The board's LAN8720, preferred to Wi-Fi while it has an address.
+    net.ethernet(tesserkit::boards::gledopto());
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");  // Paris
+    // Updates from this repository's releases (.github/workflows/release.yml),
+    // and from any URL.
+    firmware.github("leokeba/ballet-photophonique", "ballet-photophonique-{target}.bin");
     // Art-Net: each output's duty on two channels (16 bits), 1–2 for output
     // 1 to 9–10 for output 5. Off until turned on, so a console on the
     // network can't take the outputs over.

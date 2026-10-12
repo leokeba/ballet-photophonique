@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "hal/ledc_ll.h"
 #include "photophonique/pwm.h"
+#include "soc/ledc_struct.h"
 
 namespace photophonique {
 
@@ -62,7 +63,7 @@ public:
     void timing(int index, const Timing& t) override {
         if (index < 0 || index >= kMaxOutputs) return;
         Slot s = slot(index);
-        ledc_dev_t* hw = LEDC_LL_GET_HW(0);
+        ledc_dev_t* hw = &LEDC;  // LEDC_LL_GET_HW() takes a group from ESP-IDF 6 on
         uint32_t bits = 0;
         ledc_ll_get_duty_resolution(hw, s.mode, s.timer, &bits);
         ledc_ll_set_clock_divider(hw, s.mode, s.timer, t.divider);
@@ -94,7 +95,7 @@ private:
     void flush(int index) {
         if (!waiting_[index]) return;
         Slot s = slot(index);
-        if (LEDC_LL_GET_HW(0)->channel_group[s.mode].channel[s.channel].conf1.duty_start) return;
+        if (LEDC.channel_group[s.mode].channel[s.channel].conf1.duty_start) return;
         ledc_set_duty(s.mode, s.channel, counts_[index]);
         ledc_update_duty(s.mode, s.channel);
         waiting_[index] = false;

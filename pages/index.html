@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Reach a Ballet Photophonique controller over USB or the network: TesserUI's launcher." />
+    <title>Ballet Photophonique</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <!-- TesserUI's bundle, published by .github/workflows/release.yml with the
+         firmware it serves. A launcher: it opens ?api=, or the controller the
+         user picks (TesserUI's DESIGN.md section 9.7). -->
+    <script>
+      window.TESSER = { launcher: true, title: 'Ballet Photophonique' };
+    </script>
+    <script src="ui.js"></script>
+  </body>
+</html>

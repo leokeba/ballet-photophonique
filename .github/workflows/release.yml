@@ -1,0 +1,89 @@
+# Each push to main: the host tests, then a release of the firmware under the
+# next patch version (ballet-photophonique-esp32.bin, the image the controllers
+# install from /sys/firmware/github, and ballet-photophonique-esp32-factory.bin,
+# the whole flash for a new board), built by TesserKIT's firmware.yml against
+# the libraries' main branches; and TesserUI's launcher on GitHub Pages
+# (https://leokeba.github.io/ballet-photophonique/), built from the same
+# TesserUI. A commit message with "[skip ci]" releases nothing.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One release at a time, so two pushes never take the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      # The repository and the libraries side by side, as on a developer's
+      # machine.
+      - uses: actions/checkout@v5
+        with:
+          path: ballet-photophonique
+      - name: Check out the libraries
+        run: |
+          for repo in TesserAPI TesserKIT; do
+            git clone -q --depth 1 "https://github.com/leokeba/$repo" "$repo"
+            echo "$repo $(git -C "$repo" rev-parse --short HEAD)"
+          done
+      - name: Build and run tests (ASan + UBSan)
+        working-directory: ballet-photophonique
+        run: |
+          cmake -S . -B build
+          cmake --build build -j
+          ctest --test-dir build --output-on-failure
+
+  firmware:
+    needs: host-tests
+    permissions:
+      contents: write
+    uses: leokeba/TesserKIT/.github/workflows/firmware.yml@main
+    with:
+      project: firmware
+      name: ballet-photophonique
+      dependencies: |
+        leokeba/TesserAPI
+        leokeba/TesserUI
+        leokeba/TesserKIT
+
+  # The launcher (TesserUI's DESIGN.md section 9.7): the controllers reached
+  # over USB or the network, with no interface of their own needed.
+  pages:
+    needs: host-tests
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: leokeba/TesserUI
+          path: TesserUI
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: TesserUI/web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: TesserUI/web/pnpm-lock.yaml
+      - name: Build the bundle
+        working-directory: TesserUI/web
+        run: pnpm install --frozen-lockfile && pnpm build
+      - name: Site
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
