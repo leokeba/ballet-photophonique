@@ -148,7 +148,7 @@ TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a d
 ## 10. Testing
 
 1. **Host tests** (CMake, ASan, UBSan, `build/photophonique_tests`): `plan()` against hand-computed dividers (ESP-IDF's 5 kHz, 13-bit example), fractional frequencies, the resolution lowered and raised, a sweep of every frequency and resolution landing within one divider step; duty rounding; outputs on the fake PWM (stored until begun, rescaled duty, All off, a refused pin); the tree (ranges, patches in either order, persistence and restore).
-2. **On the board:** done by hand on 2026-10-12, outputs off: writes over HTTP and serial across both clocks, both speed groups and periods up to 1000 s, with no reset; a stored 0.5 Hz state boots. *(later)* `test/e2e_outputs.py`, and a scope on the terminals: frequency and duty against `applied/`, at the limits of each clock, and a duty change at low frequency arriving within two periods.
+2. **On the board:** v0.1.0, the first release (ESP-IDF 5.5), found and installed from `/sys/firmware/github` over Wi-Fi on 2026-10-12, settings kept, confirmed after a minute online. Ethernet: the subtree comes up without a cable (link down); not yet tried with one. By hand on 2026-10-12, outputs off: writes over HTTP and serial across both clocks, both speed groups and periods up to 1000 s, with no reset; a stored 0.5 Hz state boots. *(later)* `test/e2e_outputs.py`, and a scope on the terminals: frequency and duty against `applied/`, at the limits of each clock, and a duty change at low frequency arriving within two periods.
 
 ## 11. Roadmap
 
