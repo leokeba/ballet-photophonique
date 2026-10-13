@@ -3,6 +3,7 @@
 // Ballet Photophonique: independent PWM outputs on TesserAPI. See
 // docs/DESIGN.md.
 
+#include "photophonique/ensemble.h"
 #include "photophonique/midi.h"
 #include "photophonique/output.h"
 #include "photophonique/pwm.h"

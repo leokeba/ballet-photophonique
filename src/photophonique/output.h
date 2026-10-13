@@ -10,6 +10,10 @@
 #include "photophonique/timing.h"
 #include "tesser/node.h"
 
+namespace tesser {
+class Api;
+}
+
 namespace photophonique {
 
 class Output {
@@ -48,6 +52,14 @@ public:
         if (node_) node_->changed();
     }
 
+    // Who last wrote the settings through the tree: the device (its MAC)
+    // of the client whose request it was, when the transport knows it
+    // (another controller over UDP or NowTP), else nobody. So a node turns
+    // off what a lost master turned on (docs/DESIGN.md section 5.7).
+    void wrote();
+    bool writtenBy(const uint8_t* device, uint8_t length) const;
+    void track(const tesser::Api* api) { api_ = api; }
+
 private:
     void retime();
     void applyDuty();
@@ -62,6 +74,9 @@ private:
     uint8_t resolution_ = kResolution;
     Timing timing_ = plan(kFrequency, kResolution);
     tesser::Node* node_ = nullptr;
+    const tesser::Api* api_ = nullptr;
+    uint8_t writer_[6] = {};
+    uint8_t writerLength_ = 0;
 };
 
 // The /outputs tree (docs/DESIGN.md section 6): one object per output, named
@@ -73,6 +88,12 @@ struct Outputs {
 
     bool begin();
     void allOff();
+    // Outputs remember which device wrote them last, through `api`'s
+    // requests (Output::wrote()).
+    void trackWriters(const tesser::Api& api);
+    // Turns off the outputs `device` wrote last, and that are on: it is
+    // gone. Returns how many.
+    int release(const uint8_t* device, uint8_t length);
     // Output `n` (1 to count), or null.
     Output* at(int n) { return n >= 1 && n <= count ? &items[n - 1] : nullptr; }
 };

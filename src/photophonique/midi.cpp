@@ -31,8 +31,8 @@ void Midi::message(uint8_t status, uint8_t data1, uint8_t data2) {
         case 0xE0: {
             int v = (data2 << 7 | data1) - 8192;
             bend_ = v < 0 ? static_cast<float>(v) / 8192 : static_cast<float>(v) / 8191;
-            for (int n = 1; n <= outputs_.count; n++) {
-                if (voices_[n - 1] >= 0) apply(n);
+            for (int t = 0; t < kTargets; t++) {
+                if (voices_[t].note >= 0) sound(t, false);
             }
             if (bendNode_) bendNode_->changed();
             break;
@@ -42,47 +42,71 @@ void Midi::message(uint8_t status, uint8_t data1, uint8_t data2) {
     }
 }
 
+bool Midi::playable(int t) {
+    if (t < 10) return outputs_.at(t) != nullptr;
+    int o = t % 10;
+    return remote_ && t < kTargets && o >= 1 && o <= kMaxOutputs;
+}
+
 void Midi::noteOn(uint8_t note, uint8_t velocity) {
-    int n = outputs[note];
-    if (!outputs_.at(n)) return;
-    voices_[n - 1] = static_cast<int8_t>(note);
-    hz_[n - 1] = frequencies[note] > 0 ? frequencies[note] : noteHz(note);
-    duty_[n - 1] = static_cast<float>(velocity) * 100.0f / 127.0f;
-    apply(n);
-    outputs_.at(n)->setOn(true);
-    outputs_.at(n)->announce();
-    if (voicesNode_) voicesNode_->changed();
+    int t = outputs[note];
+    if (!playable(t)) return;
+    Voice& v = voices_[t];
+    v.note = static_cast<int8_t>(note);
+    v.hz = frequencies[note] > 0 ? frequencies[note] : noteHz(note);
+    v.duty = static_cast<float>(velocity) * 100.0f / 127.0f;
+    sound(t, true);
 }
 
 void Midi::noteOff(uint8_t note) {
     // Wherever it sounds: its key may have been mapped elsewhere since.
-    for (int n = 1; n <= outputs_.count; n++) {
-        if (voices_[n - 1] != note) continue;
-        voices_[n - 1] = -1;
-        outputs_.at(n)->setOn(false);
-        outputs_.at(n)->announce();
+    for (int t = 0; t < kTargets; t++) {
+        if (voices_[t].note != note) continue;
+        voices_[t].note = -1;
+        if (t >= 10) {
+            remote_->play(t / 10, t % 10, false, 0, 0);
+            continue;
+        }
+        local_[t - 1] = -1;
+        outputs_.at(t)->setOn(false);
+        outputs_.at(t)->wrote();
+        outputs_.at(t)->announce();
         if (voicesNode_) voicesNode_->changed();
     }
 }
 
 void Midi::allNotesOff() {
-    for (int n = 1; n <= outputs_.count; n++) {
-        if (voices_[n - 1] >= 0) noteOff(static_cast<uint8_t>(voices_[n - 1]));
+    for (int t = 0; t < kTargets; t++) {
+        if (voices_[t].note >= 0) noteOff(static_cast<uint8_t>(voices_[t].note));
     }
 }
 
-void Midi::apply(int n) {
-    Output* out = outputs_.at(n);
-    double hz = hz_[n - 1];
-    float duty = duty_[n - 1];
+void Midi::sound(int t, bool start) {
+    const Voice& v = voices_[t];
+    double hz = v.hz;
+    float duty = v.duty;
     if (bendTarget == Bend::Frequency) {
         hz *= pow(2.0, static_cast<double>(bend_ * bendSemitones) / 12.0);
     } else {
         duty += bend_ * bendDuty;
         duty = duty < 0 ? 0 : duty > 100 ? 100 : duty;
     }
-    out->setFrequency(hz < kMinHz ? kMinHz : hz > kMaxHz ? kMaxHz : hz);
+    hz = hz < kMinHz ? kMinHz : hz > kMaxHz ? kMaxHz : hz;
+    if (t >= 10) {
+        // Another controller's output gets its whole state each time.
+        remote_->play(t / 10, t % 10, true, hz, duty);
+        return;
+    }
+    // A bend leaves an output turned off by hand off.
+    Output* out = outputs_.at(t);
+    out->setFrequency(hz);
     out->setDuty(duty);
+    if (start) {
+        out->setOn(true);
+        out->wrote();  // this note's client's, not a lost master's to turn off
+        local_[t - 1] = v.note;
+        if (voicesNode_) voicesNode_->changed();
+    }
     out->announce();
 }
 
@@ -125,9 +149,18 @@ void describe(Object& o, Midi& midi) {
                      .ui("widget", "x-midi")
                      .ui("script", elements::kMidiPath);
     keys.array("outputs", midi.outputs)
-        .range(0, midi.count())
+        .range(0, midi.maxTarget())
         .persist()
-        .doc("Per MIDI note (0–127): the output it plays, 0 for none");
+        .ui("outputs", midi.count())  // this controller's, for the editor
+        .doc(midi.maxTarget() > midi.count()
+                 ? "Per MIDI note (0–127): the output it plays, 0 for none; 10 × slot + output for another "
+                   "controller's (11 is slot 1's output 1)"
+                 : "Per MIDI note (0–127): the output it plays, 0 for none");
+    if (midi.remote()) {
+        auto& names = keys.array("nodes", midi.remote()->names())
+                          .doc("Per slot (1–9): its controller's name, empty for none (/ensemble)");
+        midi.remote()->namesNode(&names);
+    }
     keys.array("frequencies", midi.frequencies)
         .range(0, kMaxHz)
         .persist()

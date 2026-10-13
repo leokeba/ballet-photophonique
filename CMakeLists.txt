@@ -5,6 +5,7 @@ set(PHOTOPHONIQUE_SRCS
     src/photophonique/output.cpp
     src/photophonique/outputs_tree.cpp
     src/photophonique/midi.cpp
+    src/photophonique/ensemble.cpp
     src/photophonique/smf.cpp
     src/photophonique/recorder.cpp
     src/photophonique/recorder_tree.cpp)

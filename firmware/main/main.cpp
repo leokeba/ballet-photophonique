@@ -49,6 +49,8 @@ photophonique::Output out[5] = {{photophonique::defaultPwm(), 0, board::kOutputs
                                 {photophonique::defaultPwm(), 4, board::kOutputs[4]}};
 photophonique::Outputs outputs{out, 5};
 photophonique::Midi midi(outputs);
+// Other controllers' outputs, played by keys mapped to them (DESIGN 5.7).
+photophonique::Ensemble ensemble;
 // Recordings in recordings/*.mid, replayed by the player's task.
 ClipFilesOnFiles clipFiles(files);
 photophonique::Recorder recorder(dev.api(), midi, clipFiles, photophonique::defaultClock());
@@ -120,8 +122,11 @@ extern "C" void app_main() {
     auto& api = dev.api();
     api.mount("outputs", outputs).label("Outputs").ui("icon", "bulb");
     // MIDI from the browser (x-midi, served from flash here and from the
-    // launcher's own page on GitHub Pages).
+    // launcher's own page on GitHub Pages), onto this controller's outputs
+    // and the ensemble's.
+    midi.remote(&ensemble);
     api.mount("midi", midi).label("MIDI").ui("icon", "play");
+    api.mount("ensemble", ensemble).label("Ensemble").ui("icon", "link");
     namespace el = photophonique::elements;
     dev.web().asset(el::kMidiPath, el::kMidi, sizeof(el::kMidi), "text/javascript", true);
     api.mount("recorder", recorder).label("Recorder").ui("icon", "target");
@@ -129,14 +134,25 @@ extern "C" void app_main() {
     addViews(api);
     // Duties that waited for their channel's period (pwm.h), in TesserKIT's
     // task, under the lock the tree's setters hold.
+    // The ensemble's controllers back online get what they should be
+    // playing, in the same tick.
     dev.onTick([&api](uint32_t) {
         tesser::Lock lock(api);
         photophonique::defaultPwm().poll();
+        ensemble.tick();
     });
 
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
     dev.begin();  // loads the stored settings
     outputs.begin();
+    // Outputs remember which controller wrote them, so a lost master's are
+    // turned off *(later: TesserKIT's hook for a device lost from every
+    // transport, DESIGN 9)*. The controllers are mounted under /peers.
+    outputs.trackWriters(api);
+    {
+        tesser::Lock lock(api);
+        ensemble.peers(api.object("peers"));
+    }
     {
         tesser::Lock lock(api);
         recorder.begin();  // the current recording, from the files mounted by dev.begin()

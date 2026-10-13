@@ -14,7 +14,9 @@
 //   (Chrome's keyboard layout map, on secure pages; QWERTY's otherwise).
 //   No secure page needed: it works from the controller's own page too;
 // - edits the keys: click one (shift-click: a range, or play keys with Learn
-//   on), then choose its output and, for a single key, its frequency.
+//   on), then choose its output and, for a single key, its frequency. An
+//   output may be another controller's (DESIGN 5.7): 10 × slot + output,
+//   offered for each slot /midi/keys/nodes names.
 
 const LOW = 21; // A0
 const HIGH = 108; // C8
@@ -38,6 +40,10 @@ const VELOCITIES = [1, 20, 40, 60, 80, 100, 120, 127]; // Ableton's steps
 // Labels without the browser's layout map: QWERTY.
 const QWERTY = (code) => (code.startsWith('Key') ? code.slice(3) : { Semicolon: ';', Quote: "'" }[code] ?? code);
 
+// A key map value: 0 none, 1–8 this controller's output, 10 × slot + output
+// another controller's.
+const outputOf = (t) => (t >= 10 ? t % 10 : t);
+const colorOf = (t) => COLORS[(outputOf(t) - 1) % COLORS.length];
 const noteName = (n) => `${NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 const noteHz = (n) => 440 * 2 ** ((n - 69) / 12);
 const hz = (f) => (f >= 1000 ? `${+(f / 1000).toFixed(4)} kHz` : `${+f.toFixed(3)} Hz`);
@@ -61,6 +67,7 @@ const typingChoice = local(STORE_TYPING);
 
 class Midi extends HTMLElement {
   #value = { outputs: [], frequencies: [], voices: [] };
+  #nodes = ''; // the slots' names the output buttons were built for
   #schema = null;
   #disabled = false;
   #access = null;
@@ -109,7 +116,8 @@ class Midi extends HTMLElement {
         .c { fill: var(--muted, #5d6675); font: 8px system-ui, sans-serif; text-anchor: middle; }
         .edit { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px; }
         .edit b { font-weight: 600; }
-        .outs { display: inline-flex; gap: 3px; }
+        .outs { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+        .outs .node { margin: 0 2px 0 8px; color: var(--muted, #5d6675); font-size: .9em; }
         .outs button { min-width: 2em; }
         .outs button i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
         input[type=number] { width: 9em; }
@@ -202,6 +210,7 @@ class Midi extends HTMLElement {
 
   set value(v) {
     this.#value = v && typeof v === 'object' ? v : this.#value;
+    if (JSON.stringify(this.#value.nodes ?? []) !== this.#nodes) this.#outputs();
     this.#paint();
   }
   get value() {
@@ -219,9 +228,18 @@ class Midi extends HTMLElement {
   set label(_) {}
   set error(_) {}
 
-  // How many outputs: the key map's range.
+  // This controller's outputs: the map's hint, else its range (firmware
+  // without other controllers).
   get #count() {
-    return this.#schema?.children?.outputs?.items?.max ?? 5;
+    const o = this.#schema?.children?.outputs;
+    return +(o?.ui?.outputs ?? o?.items?.max ?? 5);
+  }
+
+  // "Output 3", or "stage-left's output 3".
+  #name(t) {
+    if (t < 10) return `output ${t}`;
+    const node = (this.#value.nodes ?? [])[Math.floor(t / 10) - 1] || `node ${Math.floor(t / 10)}`;
+    return `${node}'s output ${t % 10}`;
   }
 
   #status(text, warn = false) {
@@ -441,17 +459,30 @@ class Midi extends HTMLElement {
     this.#paint();
   }
 
+  // A button per output: none, this controller's, then each named slot's
+  // (as many as here: the ensemble's controllers are alike).
   #outputs() {
+    const nodes = this.#value.nodes ?? [];
+    this.#nodes = JSON.stringify(nodes);
     const box = this.$('.outs');
     box.innerHTML = '';
-    for (let o = 0; o <= this.#count; o++) {
+    const button = (t) => {
       const b = document.createElement('button');
-      b.dataset.output = o;
-      b.innerHTML = o ? `<i style="background:${COLORS[(o - 1) % COLORS.length]}"></i>${o}` : '–';
-      b.title = o ? `Output ${o}` : 'No output';
-      b.addEventListener('click', () => this.#setOutput(o));
+      b.dataset.output = t;
+      b.innerHTML = t ? `<i style="background:${colorOf(t)}"></i>${outputOf(t)}` : '–';
+      b.title = t ? this.#name(t).replace(/^o/, 'O') : 'No output';
+      b.addEventListener('click', () => this.#setOutput(t));
       box.append(b);
-    }
+    };
+    for (let o = 0; o <= this.#count; o++) button(o);
+    nodes.forEach((name, i) => {
+      if (!name) return;
+      const label = document.createElement('span');
+      label.className = 'node';
+      label.textContent = name;
+      box.append(label);
+      for (let o = 1; o <= this.#count; o++) button(10 * (i + 1) + o);
+    });
     this.#editor();
   }
 
@@ -476,16 +507,17 @@ class Midi extends HTMLElement {
     for (const [n, g] of this.#keys) {
       const o = outs[n] ?? 0;
       const black = g.classList.contains('b');
-      g.querySelector('rect').style.fill = o ? COLORS[(o - 1) % COLORS.length] : '';
+      g.querySelector('rect').style.fill = o ? colorOf(o) : '';
       g.querySelector('rect').style.fillOpacity = o && !black ? '0.75' : '';
-      g.querySelector('text').textContent = o ? String(o) : '';
+      // Another controller's output: its slot too, "2·3".
+      g.querySelector('text').textContent = o >= 10 ? `${Math.floor(o / 10)}·${o % 10}` : o ? String(o) : '';
       g.querySelector('.kbd').textContent = '';
       g.classList.toggle('held', this.#held.has(n));
       g.classList.toggle('mapped', o > 0);
       g.classList.toggle('sel', this.#selected.has(n));
       g.classList.toggle('sounds', sounding.has(n));
       const f = freqs[n] > 0 ? freqs[n] : noteHz(n);
-      g.querySelector('title').textContent = `${noteName(n)} (${n}): ${o ? `output ${o}` : 'no output'}, ${hz(f)}`;
+      g.querySelector('title').textContent = `${noteName(n)} (${n}): ${o ? this.#name(o) : 'no output'}, ${hz(f)}`;
     }
     if (this.#typing) {
       for (const [code, step] of Object.entries(TYPING)) {
@@ -515,7 +547,7 @@ class Midi extends HTMLElement {
       which.innerHTML = `<b>${noteName(sel[0])}–${noteName(sel.at(-1))}</b> (${sel.length} keys)`;
     }
     const same = sel.length && sel.every((n) => (outs[n] ?? 0) === (outs[sel[0]] ?? 0)) ? (outs[sel[0]] ?? 0) : null;
-    for (const b of this.$('.outs').children) {
+    for (const b of this.$('.outs').querySelectorAll('button')) {
       b.disabled = this.#disabled || !sel.length;
       b.setAttribute('aria-pressed', String(same !== null && +b.dataset.output === same));
     }

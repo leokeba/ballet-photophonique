@@ -762,7 +762,7 @@ class Recorder extends HTMLElement {
     // Notes.
     for (const n of notes) {
       const o = this.#outputs[n.n] ?? 0;
-      const fill = o ? COLORS[(o - 1) % COLORS.length] : '#9aa1ab';
+      const fill = o ? COLORS[((o >= 10 ? o % 10 : o) - 1) % COLORS.length] : '#9aa1ab';  // 10 × slot + output: its output's
       const cls = `note${this.#selected.has(n.id) ? ' sel' : ''}${n.t >= length && length ? ' out' : ''}`;
       const opacity = 0.45 + (0.55 * n.v) / 127;
       out.push(

@@ -1,5 +1,9 @@
 #include "photophonique/output.h"
 
+#include <string.h>
+
+#include "tesser/api.h"
+
 namespace photophonique {
 
 bool Output::begin() {
@@ -54,6 +58,31 @@ void Outputs::allOff() {
         items[i].setOn(false);
         items[i].announce();
     }
+}
+
+void Output::wrote() {
+    const tesser::Client* c = api_ ? api_->currentClient() : nullptr;
+    writerLength_ = c && c->deviceLength <= sizeof(writer_) ? c->deviceLength : 0;
+    if (writerLength_) memcpy(writer_, c->device, writerLength_);
+}
+
+bool Output::writtenBy(const uint8_t* device, uint8_t length) const {
+    return length && length == writerLength_ && memcmp(device, writer_, length) == 0;
+}
+
+void Outputs::trackWriters(const tesser::Api& api) {
+    for (int i = 0; i < count; i++) items[i].track(&api);
+}
+
+int Outputs::release(const uint8_t* device, uint8_t length) {
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        if (!items[i].writtenBy(device, length) || !items[i].on()) continue;
+        items[i].setOn(false);
+        items[i].announce();
+        n++;
+    }
+    return n;
 }
 
 }  // namespace photophonique
