@@ -3,7 +3,8 @@
 // under /outputs, played from a MIDI keyboard under /midi, recorded and
 // replayed under /recorder; TesserKIT for
 // Ethernet and Wi-Fi, time, updates from this repository's releases, files
-// and backups, timers, accounts and Art-Net under /sys.
+// and backups, timers, accounts, Art-Net and the API over UDP (the other
+// controllers on the LAN, under /peers) under /sys.
 //
 // Flash it and plug in a cable, or join the "ballet-photophonique-xxxx"
 // network from a phone, and the interface opens; or reach it from the
@@ -35,6 +36,7 @@ tesserkit::Backup backup(dev);
 tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
 tesserkit::ArtNet artnet(dev);
+tesserkit::UdpApi udp(dev);  // the controllers on the LAN, under /peers
 // The launcher's USB way: envelopes on the console's UART, one per line, with
 // Admin access (physical access). Logs stay at warnings, so that few land in
 // the middle of a reply (sdkconfig.defaults).
