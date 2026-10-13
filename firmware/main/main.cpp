@@ -113,7 +113,10 @@ extern "C" void app_main() {
     // A node handles its master's writes in UDP's own task: in TesserKIT's
     // (its default since v0.1.14) they wait about 10 ms more.
     udp.maxCalls(10).ownTask(true);
-    peers.order("udp, nowtp");
+    // Ethernet first, then NowTP, then UDP over Wi-Fi: a controller on Wi-Fi
+    // only is still reached. The show's can keep UDP to Ethernet with
+    // /sys/udp/interfaces.
+    peers.order("udp/ethernet, nowtp");
     // A master gone from every transport, or restarted: what it turned on
     // here goes off.
     peers.onDeviceLost([](const tesser::PeerAddress& device, tesser::PeerLoss) {
