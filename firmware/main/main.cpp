@@ -110,10 +110,15 @@ extern "C" void app_main() {
     // show, by NowTP for testing (off until turned on), each streamed to by
     // a master with nine slots.
     espNow.enable(false).mountPeers(true).maxCalls(10);
-    udp.maxCalls(10);
+    // A node handles its master's writes in UDP's own task: in TesserKIT's
+    // (its default since v0.1.14) they wait about 10 ms more.
+    udp.maxCalls(10).ownTask(true);
     peers.order("udp, nowtp");
-    // A master gone from every transport: what it turned on here goes off.
-    peers.onDeviceLost([](const tesser::PeerAddress& device) { outputs.release(device.bytes, device.length); });
+    // A master gone from every transport, or restarted: what it turned on
+    // here goes off.
+    peers.onDeviceLost([](const tesser::PeerAddress& device, tesser::PeerLoss) {
+        outputs.release(device.bytes, device.length);
+    });
     // Updates from this repository's releases (.github/workflows/release.yml),
     // and from any URL.
     firmware.github("leokeba/ballet-photophonique", "ballet-photophonique-{target}.bin");
