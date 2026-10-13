@@ -51,6 +51,7 @@ jobs:
         leokeba/TesserAPI
         leokeba/TesserUI
         leokeba/TesserKIT
+        leokeba/NowTP
 
   # The launcher (TesserUI's DESIGN.md section 9.7): the controllers reached
   # over USB or the network, with no interface of their own needed.

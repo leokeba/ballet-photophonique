@@ -29,6 +29,7 @@ namespace {
 tesserkit::Device dev("Ballet Photophonique");
 tesserkit::System sys(dev);
 tesserkit::Network net(dev);
+tesserkit::NowTp espNow(dev);  // the controllers nearby over ESP-NOW, for testing (after Network)
 tesserkit::Time timekeeper(dev);
 tesserkit::Firmware firmware(dev);
 tesserkit::Files files(dev);  // LittleFS: the stored backups, the recordings
@@ -37,6 +38,7 @@ tesserkit::Timers timers(dev);
 tesserkit::Auth auth(dev);  // open until an admin account exists
 tesserkit::ArtNet artnet(dev);
 tesserkit::UdpApi udp(dev);  // the controllers on the LAN, under /peers
+tesserkit::Peers peers(dev);  // how they are reached (UDP, then NowTP), and signed in to
 // The launcher's USB way: envelopes on the console's UART, one per line, with
 // Admin access (physical access). Logs stay at warnings, so that few land in
 // the middle of a reply (sdkconfig.defaults).
@@ -104,6 +106,14 @@ extern "C" void app_main() {
     // The board's LAN8720, preferred to Wi-Fi while it has an address.
     net.ethernet(tesserkit::boards::gledopto());
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");  // Paris
+    // The ensemble (DESIGN 5.7): the controllers by UDP over Ethernet for the
+    // show, by NowTP for testing (off until turned on), each streamed to by
+    // a master with nine slots.
+    espNow.enable(false).mountPeers(true).maxCalls(10);
+    udp.maxCalls(10);
+    peers.order("udp, nowtp");
+    // A master gone from every transport: what it turned on here goes off.
+    peers.onDeviceLost([](const tesser::PeerAddress& device) { outputs.release(device.bytes, device.length); });
     // Updates from this repository's releases (.github/workflows/release.yml),
     // and from any URL.
     firmware.github("leokeba/ballet-photophonique", "ballet-photophonique-{target}.bin");
@@ -146,12 +156,12 @@ extern "C" void app_main() {
     dev.begin();  // loads the stored settings
     outputs.begin();
     // Outputs remember which controller wrote them, so a lost master's are
-    // turned off *(later: TesserKIT's hook for a device lost from every
-    // transport, DESIGN 9)*. The controllers are mounted under /peers.
+    // turned off (peers.onDeviceLost above). The controllers are mounted
+    // under /peers.
     outputs.trackWriters(api);
     {
         tesser::Lock lock(api);
-        ensemble.peers(api.object("peers"));
+        ensemble.peers(peers.nodes());
     }
     {
         tesser::Lock lock(api);
