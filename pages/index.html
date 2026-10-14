@@ -3,19 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="description" content="Reach a Ballet Photophonique controller over USB or the network: TesserUI's launcher." />
+    <meta name="description" content="Reach a Ballet Photophonique controller over USB or the network, or install one on a board: TesserUI's launcher." />
     <title>Ballet Photophonique</title>
     <link rel="icon" href="data:," />
   </head>
   <body>
     <!-- TesserUI's bundle, published by .github/workflows/release.yml with the
          firmware it serves. A launcher: it opens ?api=, or the controller the
-         user picks (TesserUI's DESIGN.md section 9.7). -->
+         user picks (TesserUI's DESIGN.md section 9.7). It installs the latest
+         releases over USB, which the workflow copies next to it, then sets up
+         the controller's Wi-Fi (section 9.7.1). -->
     <script>
       // midi.js and recorder.js: the MIDI keyboard and the recorder's
       // elements, from this page's origin, since an HTTPS page can't load
       // them from a controller's http:// address.
-      window.TESSER = { launcher: true, title: 'Ballet Photophonique', scripts: ['midi.js', 'recorder.js'] };
+      window.TESSER = {
+        launcher: true,
+        title: 'Ballet Photophonique',
+        scripts: ['midi.js', 'recorder.js'],
+        firmware: {
+          images: [
+            {
+              label: 'Ballet Photophonique',
+              asset: 'ballet-photophonique-{target}-factory.bin',
+              description: 'The PWM controller for the Gledopto GL-C-611WL: five outputs, MIDI, the recorder and the ensemble.',
+            },
+          ],
+          wifi: '/sys/network/wifi',
+        },
+      };
     </script>
     <script src="ui.js"></script>
   </body>

@@ -4,7 +4,7 @@
 # the whole flash for a new board), built by TesserKIT's firmware.yml against
 # the libraries' main branches; and TesserUI's launcher on GitHub Pages
 # (https://leokeba.github.io/ballet-photophonique/), built from the same
-# TesserUI. A commit message with "[skip ci]" releases nothing.
+# TesserUI, with the latest releases' images for its flasher. A commit message with "[skip ci]" releases nothing.
 name: Release
 
 on:
@@ -54,11 +54,15 @@ jobs:
         leokeba/NowTP
 
   # The launcher (TesserUI's DESIGN.md section 9.7): the controllers reached
-  # over USB or the network, with no interface of their own needed.
+  # over USB or the network, with no interface of their own needed, and a new
+  # board installed over USB. Deployed even when the release failed, with the
+  # releases there are.
   pages:
-    needs: host-tests
+    needs: [host-tests, firmware]
+    if: ${{ !cancelled() && needs.host-tests.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
@@ -81,8 +85,16 @@ jobs:
       - name: Build the bundle
         working-directory: TesserUI/web
         run: pnpm install --frozen-lockfile && pnpm build
+      # ui.js loads the launcher's workspace (several controllers at once)
+      # from launcher.js beside it, and the flasher from flash/.
       - name: Site
-        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js web/elements/midi.js web/elements/recorder.js _site/
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js TesserUI/web/dist/launcher.js web/elements/midi.js web/elements/recorder.js _site/ && cp -R TesserUI/web/dist/flash _site/flash
+      # A page can't read release assets from GitHub (no CORS): the flasher
+      # finds them next to it.
+      - name: The firmware the launcher installs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node TesserUI/web/scripts/firmware.mjs "$GITHUB_REPOSITORY" _site/firmware --releases 3
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
