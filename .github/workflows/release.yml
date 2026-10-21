@@ -2,9 +2,10 @@
 # next patch version (ballet-photophonique-esp32.bin, the image the controllers
 # install from /sys/firmware/github, and ballet-photophonique-esp32-factory.bin,
 # the whole flash for a new board), built by TesserKIT's firmware.yml against
-# the libraries' main branches; and TesserUI's launcher on GitHub Pages
-# (https://leokeba.github.io/ballet-photophonique/), built from the same
-# TesserUI, with the latest releases' images for its flasher. A commit message with "[skip ci]" releases nothing.
+# the sibling commits deps.lock pins (scripts/pin.sh); and TesserUI's launcher
+# on GitHub Pages (https://leokeba.github.io/ballet-photophonique/), built from
+# the same TesserUI, with the latest releases' images for its flasher. A commit
+# message with "[skip ci]" releases nothing.
 name: Release
 
 on:
@@ -22,15 +23,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # The repository and the libraries side by side, as on a developer's
-      # machine.
+      # machine, the libraries at deps.lock's commits.
       - uses: actions/checkout@v5
         with:
           path: ballet-photophonique
       - name: Check out the libraries
         run: |
-          for repo in TesserAPI TesserKIT; do
-            git clone -q --depth 1 "https://github.com/leokeba/$repo" "$repo"
-            echo "$repo $(git -C "$repo" rev-parse --short HEAD)"
+          for dep in $(sed 's/#.*//' ballet-photophonique/deps.lock); do
+            repo=${dep%@*}
+            sha=${dep#*@}
+            dir=${repo#*/}
+            git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "https://github.com/$repo" "$sha"
+            git -C "$dir" checkout -q FETCH_HEAD
+            echo "$repo $(git -C "$dir" rev-parse --short HEAD)"
           done
       - name: Build and run tests (ASan + UBSan)
         working-directory: ballet-photophonique
@@ -47,11 +53,7 @@ jobs:
     with:
       project: firmware
       name: ballet-photophonique
-      dependencies: |
-        leokeba/TesserAPI
-        leokeba/TesserUI
-        leokeba/TesserKIT
-        leokeba/NowTP
+      dependencies-file: deps.lock
 
   # The launcher (TesserUI's DESIGN.md section 9.7): the controllers reached
   # over USB or the network, with no interface of their own needed, and a new
@@ -70,9 +72,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+      - id: pins
+        run: echo "tesserui=$(sed -n 's|^leokeba/TesserUI@||p' deps.lock)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v5
         with:
           repository: leokeba/TesserUI
+          ref: ${{ steps.pins.outputs.tesserui }}
           path: TesserUI
       - uses: pnpm/action-setup@v4
         with:

@@ -55,6 +55,16 @@ endif()
 set(TESSERKIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${TESSERKIT_DIR}" "${CMAKE_BINARY_DIR}/tesserkit")
 
+# Each checkout against deps.lock: a warning when it isn't the pinned commit
+# (TesserUI and NowTP are the firmware's, beside this repository).
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps.cmake")
+photophonique_check_sibling(TesserKIT "${TESSERKIT_DIR}")
+photophonique_check_sibling(TesserAPI "${TESSERAPI_DIR}")
+foreach(dep TesserUI NowTP)
+    get_filename_component(dir "${CMAKE_CURRENT_SOURCE_DIR}/../${dep}" ABSOLUTE)
+    photophonique_check_sibling(${dep} "${dir}")
+endforeach()
+
 set(PHOTOPHONIQUE_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror -fno-exceptions -fno-rtti)
 
 add_library(photophonique_core ${PHOTOPHONIQUE_SRCS})
