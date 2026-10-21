@@ -48,7 +48,9 @@ Each push to `main` publishes a release (`.github/workflows/release.yml`). The c
 uvx esptool --port <port> --baud 230400 write-flash 0 ballet-photophonique-esp32-factory.bin
 ```
 
-The same workflow publishes the launcher at [leokeba.github.io/ballet-photophonique](https://leokeba.github.io/ballet-photophonique/): it reaches a controller over USB (in Chrome) or by its address.
+The same workflow publishes the launcher at [leokeba.github.io/ballet-photophonique](https://leokeba.github.io/ballet-photophonique/): it reaches a controller over USB (in Chrome), by its address, or among the controllers the bridge finds nearby, and installs the latest release on a new board over USB, then sets up its Wi-Fi.
+
+The bridge runs on your machine, finds the controllers on its network and serves the launcher at `http://localhost:8765/`, where it also installs the latest releases. On a Mac it is a single executable with nothing to install: download it for [Apple silicon](https://github.com/leokeba/ballet-photophonique/releases/latest/download/ballet-photophonique-bridge-macos-arm64.zip) or [Intel](https://github.com/leokeba/ballet-photophonique/releases/latest/download/ballet-photophonique-bridge-macos-x64.zip), unzip it and double-click `ballet-photophonique-bridge`, which runs in a Terminal window. It isn't notarized: macOS refuses it the first time, then *System Settings › Privacy & Security* offers *Open Anyway*. Its page has the MIDI keyboard and the recorder, as the launcher on Pages does. Elsewhere, run [TesserUI's bridge](https://github.com/leokeba/TesserUI/tree/main/bridge) with Node.
 
 ## Controlling the outputs
 

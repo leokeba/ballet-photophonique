@@ -55,6 +55,27 @@ jobs:
       name: ballet-photophonique
       dependencies-file: deps.lock
 
+  # TesserUI's bridge as a macOS executable for each architecture
+  # (ballet-photophonique-bridge-macos-arm64.zip, -x64.zip), attached to the
+  # release: it finds the controllers nearby and serves this launcher from
+  # localhost, with the flasher built in and the releases' images fetched from
+  # GitHub (TesserUI's DESIGN.md section 9.7), and the keyboard and the
+  # recorder beside its page. The launcher links to the latest release's, so
+  # they are missing there until this job is done.
+  bridge:
+    needs: firmware
+    permissions:
+      contents: write
+    uses: leokeba/TesserUI/.github/workflows/bridge.yml@main
+    with:
+      page: pages/index.html
+      name: ballet-photophonique-bridge
+      tag: v${{ needs.firmware.outputs.version }}
+      files: |
+        web/elements/midi.js
+        web/elements/recorder.js
+      tesserui-ref: ${{ fromJSON(needs.firmware.outputs.dependencies)['leokeba/TesserUI'] }}
+
   # The launcher (TesserUI's DESIGN.md section 9.7): the controllers reached
   # over USB or the network, with no interface of their own needed, and a new
   # board installed over USB. Deployed even when the release failed, with the
