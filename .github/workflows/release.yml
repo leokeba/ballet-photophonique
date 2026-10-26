@@ -54,6 +54,9 @@ jobs:
       project: firmware
       name: ballet-photophonique
       dependencies-file: deps.lock
+      # ESP-IDF 6.1, as this firmware is developed on and TesserKIT releases
+      # (2026-10-26, Leo); the workflow's default is 5.5.
+      idf-version: release-v6.1
 
   # TesserUI's bridge as a macOS executable for each architecture
   # (ballet-photophonique-bridge-macos-arm64.zip, -x64.zip), attached to the
@@ -112,9 +115,10 @@ jobs:
         working-directory: TesserUI/web
         run: pnpm install --frozen-lockfile && pnpm build
       # ui.js loads the launcher's workspace (several controllers at once)
-      # from launcher.js beside it, and the flasher from flash/.
+      # from launcher.js beside it, the widgets few pages use from ui/, and
+      # the flasher from flash/.
       - name: Site
-        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js TesserUI/web/dist/launcher.js web/elements/midi.js web/elements/recorder.js _site/ && cp -R TesserUI/web/dist/flash _site/flash
+        run: mkdir _site && cp pages/index.html TesserUI/web/dist/ui.js TesserUI/web/dist/launcher.js web/elements/midi.js web/elements/recorder.js _site/ && cp -R TesserUI/web/dist/flash _site/flash && cp -R TesserUI/web/dist/ui _site/ui
       # A page can't read release assets from GitHub (no CORS): the flasher
       # finds them next to it.
       - name: The firmware the launcher installs

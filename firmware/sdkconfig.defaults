@@ -13,6 +13,11 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
 # HTTP (7 connections), DNS, downloads.
 CONFIG_LWIP_MAX_SOCKETS=16
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+# The access point is open or WPA2 (Network's fallback): its WPA3 (SAE) and
+# Enhanced Open (OWE) are never used, about 7.6 KB of flash (TesserKIT's full
+# example does the same). The station still joins WPA3 networks.
+CONFIG_ESP_WIFI_SOFTAP_SAE_SUPPORT=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_SOFTAP=n
 # Size over debuggability, as shipped firmware is built.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # The console's UART also carries the API (the launcher's USB way): the
