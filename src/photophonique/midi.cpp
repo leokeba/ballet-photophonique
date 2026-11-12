@@ -26,7 +26,11 @@ void Midi::message(uint8_t status, uint8_t data1, uint8_t data2) {
             noteOff(data1);
             break;
         case 0xB0:
-            if (data1 == 120 || data1 == 123) allNotesOff();  // all sound off, all notes off
+            if (data1 == 120 || data1 == 123) {
+                allNotesOff();  // all sound off, all notes off
+            } else {
+                controllers.moved(data1, data2);  // 121, 122, 124–127 aren't controllers: ignored there
+            }
             break;
         case 0xE0: {
             int v = (data2 << 7 | data1) - 8192;
@@ -79,6 +83,7 @@ void Midi::allNotesOff() {
     for (int t = 0; t < kTargets; t++) {
         if (voices_[t].note >= 0) noteOff(static_cast<uint8_t>(voices_[t].note));
     }
+    controllers.rest();
 }
 
 void Midi::sound(int t, bool start) {
@@ -213,6 +218,9 @@ void describe(Object& o, Midi& midi) {
         .doc("MIDI messages, each packed as status | data1 << 8 | data2 << 16 (or [message, ms ago]), or an array of them")
         .ui("hidden");
     o.action("off", [&midi] { midi.allNotesOff(); }).label("All notes off").ui("icon", "stop");
+
+    auto& cc = o.object("cc").label("Controllers").doc("Control change: each controller's value, and what it writes");
+    describe(cc, midi.controllers);
 }
 
 }  // namespace photophonique

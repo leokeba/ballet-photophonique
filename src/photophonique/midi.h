@@ -5,16 +5,20 @@
 // may be another controller's (section 5.7: RemoteOutputs). A note on sets
 // its output's frequency, its duty from the velocity, and turns it on, taking
 // the output from whichever note had it; its note off turns it off. Pitch
-// bend moves the sounding outputs' frequency or duty. Messages come from any
+// bend moves the sounding outputs' frequency or duty; control change goes to
+// the controllers' mappings (controllers.h). Messages come from any
 // client through /midi/send (the browser's Web MIDI, in the x-midi element).
 // Under the API lock, like the outputs' setters.
 
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 
+#include "photophonique/controllers.h"
 #include "photophonique/output.h"
 #include "tesser/node.h"
+#include "tesser/status.h"
 
 namespace photophonique {
 
@@ -41,6 +45,10 @@ public:
     using Names = std::string[kSlots];
     virtual const Names& names() const = 0;
     virtual void namesNode(tesser::Node* node) = 0;
+    // Writes `json` to `path` on slot `slot`'s controller, without waiting
+    // (a controller's mapping, controllers.h). Ok, or why it wasn't sent:
+    // NotFound (no controller in the slot), Timeout (offline), Busy.
+    virtual tesser::Status write(int slot, std::string_view path, std::string_view json) = 0;
 
 protected:
     ~RemoteOutputs() = default;
@@ -76,8 +84,12 @@ public:
     }
     void listen(MidiListener* listener) { listener_ = listener; }
     static constexpr uint32_t kMaxAgeMs = 60000;
-    // Turns off every output a note holds.
+    // Turns off every output a note holds, and writes the controllers'
+    // mappings' rest values.
     void allNotesOff();
+
+    // Control change: each controller's value and mappings (/midi/cc).
+    Controllers controllers;
 
     // Equal temperament, A4 (69) at 440 Hz.
     static double noteHz(int note);
@@ -94,7 +106,10 @@ public:
 
     // Other controllers' outputs, played from then on (before the tree is
     // described, which gives the key map its range).
-    void remote(RemoteOutputs* r) { remote_ = r; }
+    void remote(RemoteOutputs* r) {
+        remote_ = r;
+        controllers.remote(r);
+    }
     RemoteOutputs* remote() const { return remote_; }
 
     // The tree's voices and bend value, announced when they change.

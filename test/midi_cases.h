@@ -10,6 +10,7 @@ namespace {
 struct MidiRig : Rig {
     Midi midi{outputs};
     MidiRig() {
+        midi.controllers.attach(api);
         api.mount("midi", midi).label("MIDI");
         midi.outputs[60] = 1;  // C4
         midi.outputs[64] = 1;  // E4, on the same output

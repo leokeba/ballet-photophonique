@@ -98,6 +98,22 @@ void Ensemble::send(int slot, int output) {
     }
 }
 
+Status Ensemble::write(int slot, std::string_view path, std::string_view json) {
+    if (slot < 1 || slot > kSlots) return Status::NotFound;
+    tesser::RemoteNode* n = node(slot);
+    if (!n) {
+        dropped_++;
+        return Status::NotFound;
+    }
+    Status s = n->stream(path, json);
+    if (s == Status::Ok) {
+        sent_++;
+    } else {
+        dropped_++;
+    }
+    return s;
+}
+
 void Ensemble::tick() {
     bool renamed = false;
     for (int i = 1; i <= kSlots; i++) {

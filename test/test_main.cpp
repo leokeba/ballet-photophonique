@@ -3,7 +3,9 @@
 #include "output_cases.h"
 #include "tree_cases.h"
 #include "midi_cases.h"
+#include "controllers_cases.h"
 #include "recorder_cases.h"
+#include "recorder_cc_cases.h"
 #include "ensemble_cases.h"
 
 int main(int argc, char** argv) { return check::run(argc > 1 ? argv[1] : nullptr) ? 1 : 0; }

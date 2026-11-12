@@ -43,6 +43,10 @@ public:
     void play(int slot, int output, bool on, double hz, float duty) override;
     const Names& names() const override { return names_; }
     void namesNode(tesser::Node* node) override { namesNode_ = node; }
+    // A controller mapping's value (controllers.h), streamed like the
+    // outputs' patches. Not resent when the controller comes back: a
+    // mapping that must hold renews it.
+    tesser::Status write(int slot, std::string_view path, std::string_view json) override;
 
     // A controller back online gets the state of the outputs played there,
     // and the names follow the controllers: from the device's tick, under

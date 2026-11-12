@@ -55,6 +55,7 @@ struct EnsembleRig {
           nodeLink(&node.api, tesser::TransportKind::NowTP, sender(nodeMac), [this] { return clock; }) {
         ensemble.peers(master.api.object("peers"));
         midi.remote(&ensemble);
+        midi.controllers.attach(master.api);
         master.api.mount("midi", midi);
         master.api.mount("ensemble", ensemble);
         node.api.mount("midi", nodeMidi);
@@ -125,6 +126,36 @@ TEST(ensemble_note_plays_another_controller) {
     CHECK(near(r.node.out[0].frequency(), 261.6256, 1e-3));
     CHECK_EQ(r.midi.voice(11), -1);
     CHECK_EQ(r.ensemble.dropped(), 0u);
+}
+
+TEST(ensemble_controller_mapping_writes_another_controller) {
+    EnsembleRig r;
+    // A centred controller onto the node's output 2 duty (a stand-in for a
+    // stepper's velocity), renewed, resting at the middle.
+    CHECK(r.master.set("/midi/cc/mappings", R"([{"cc": 74, "slot": 1, "path": "/outputs/2/duty", "min": 0,
+                                                "max": 100, "centred": true, "renew": 400, "rest": "50"},
+                                               {"cc": 75, "slot": 2, "path": "/outputs/2/on", "threshold": 64}])")
+              .status == tesser::Status::Ok);
+    r.play(0xB0, 74, 127);
+    CHECK(near(r.node.out[1].duty(), 100, 1e-3));
+    r.play(0xB0, 74, 0);
+    CHECK(near(r.node.out[1].duty(), 0, 1e-3));
+    CHECK(r.midi.controllers.error().empty());
+    // Renewed from the tick, while the controller is still.
+    uint32_t sent = r.ensemble.sent();
+    {
+        tesser::Lock lock(r.master.api);
+        r.midi.controllers.tick(400);
+    }
+    r.run();
+    CHECK_EQ(r.ensemble.sent(), sent + 1);
+    // All notes off: the rest value.
+    r.play(0xB0, 123, 0);
+    CHECK(near(r.node.out[1].duty(), 50, 1e-3));
+    // An empty slot says so.
+    r.play(0xB0, 75, 127);
+    CHECK(r.midi.controllers.error().find("slot 2") == 0);
+    CHECK(!r.node.out[1].on());
 }
 
 TEST(ensemble_bend_and_all_notes_off) {

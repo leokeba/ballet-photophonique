@@ -123,6 +123,7 @@ public:
         tesser::Node* beats = nullptr;
         tesser::Node* notes = nullptr;
         tesser::Node* bends = nullptr;
+        tesser::Node* ccs = nullptr;
         tesser::Node* entries = nullptr;
         tesser::EventNode* full = nullptr;
     };
@@ -133,7 +134,7 @@ private:
 
     struct Event {
         uint32_t t;
-        uint8_t order;  // at one time: offs, bends, ons
+        uint8_t order;  // at one time: offs, bends and controllers, ons
         uint8_t status, a, b;
     };
 
@@ -151,6 +152,8 @@ private:
     void closeOpen(uint32_t t);
     void addNote(uint32_t t, uint8_t n, uint8_t v);
     void addBend(uint32_t t, int16_t v);
+    void addCc(uint32_t t, uint8_t c, uint8_t v);
+    void restartPass();  // what a pass records afresh
     void full();
     void finishTake(uint32_t at);
     void dropTake();
@@ -164,6 +167,7 @@ private:
     std::string takeName() const;
     Note* findNote(uint32_t id);
     BendPoint* findBend(uint32_t id);
+    CcPoint* findCc(uint32_t id);
     void changedClip();  // notes and bends changed
     void setPosition(uint32_t ms);
     void setState(State s);
@@ -196,6 +200,7 @@ private:
 
     uint32_t open_[128] = {};  // recording: the id of each note held
     uint32_t lastBend_ = 0;    // recording: the last bend point of this pass
+    uint32_t lastCc_[Controllers::kControllers] = {};  // recording: each controller's last point of this pass
     bool fullSaid_ = false;
 
     bool dirty_ = false;

@@ -10,8 +10,8 @@
 
 namespace photophonique::smf {
 
-// One track at 480 ticks per quarter note: the tempo, the metre, the notes
-// and bends on channel 1, the end of the track at the length.
+// One track at 480 ticks per quarter note: the tempo, the metre, the notes,
+// bends and controllers on channel 1, the end of the track at the length.
 std::string write(const Clip& clip);
 
 // Reads `data` into `clip` (ids left at 0), within the limits of clip.h.

@@ -40,7 +40,7 @@ Check Recorder::record() {
             startPass(now);
         }
         for (auto& o : open_) o = 0;
-        lastBend_ = 0;
+        restartPass();
         fullSaid_ = false;
         replaying_ = true;
         setState(State::Recording);
@@ -58,7 +58,7 @@ Check Recorder::record() {
     clip_ = std::move(c);
     eventsDirty_ = true;
     for (auto& o : open_) o = 0;
-    lastBend_ = 0;
+    restartPass();
     fullSaid_ = false;
     setPosition(0);
     setState(State::Armed);
@@ -82,6 +82,7 @@ Check Recorder::play() {
 
 void Recorder::stop() {
     uint32_t at = state_ == State::Armed ? 0 : now();
+    bool replayed = replaying_;
     switch (state_) {
         case State::Armed:
             dropTake();
@@ -99,6 +100,8 @@ void Recorder::stop() {
     }
     releaseHeld();
     replaying_ = false;
+    // What replay moved rests, where a controller's mapping says how.
+    if (replayed) midi_.controllers.rest();
     if (state_ != State::Stopped) {
         setPosition(at);
         setState(State::Stopped);
@@ -230,7 +233,7 @@ uint64_t Recorder::playDue(uint64_t now) {
         startUs_ += clip_.length * 1000ull;
         next_ = 0;
         playedTo_ = -1;
-        lastBend_ = 0;
+        restartPass();
         if (eventsDirty_) rebuild();
         setPosition(0);
     }
@@ -263,6 +266,15 @@ void Recorder::rebuild() {
         if (b.t >= length) continue;
         uint16_t u = static_cast<uint16_t>(b.v + 8192);
         events_.push_back({b.t, 1, 0xE0, static_cast<uint8_t>(u & 0x7F), static_cast<uint8_t>(u >> 7)});
+    }
+    // Each controller starts every pass at its first point's value, as a
+    // DAW's automation holds it before the first point.
+    bool started[Controllers::kControllers] = {};
+    for (const CcPoint& p : clip_.ccs) {
+        if (p.t >= length || p.c >= Controllers::kControllers) continue;
+        if (!started[p.c] && p.t > 0) events_.push_back({0, 1, 0xB0, p.c, p.v});
+        started[p.c] = true;
+        events_.push_back({p.t, 1, 0xB0, p.c, p.v});
     }
     std::stable_sort(events_.begin(), events_.end(),
                      [](const Event& x, const Event& y) { return x.t != y.t ? x.t < y.t : x.order < y.order; });
@@ -310,13 +322,14 @@ void Recorder::heard(uint8_t status, uint8_t data1, uint8_t data2, uint32_t ageM
     bool off = kind == 0x80 || (kind == 0x90 && data2 == 0);
     bool bend = kind == 0xE0;
     bool all = kind == 0xB0 && (data1 == 120 || data1 == 123);
-    if (!on && !off && !bend && !all) return;
+    bool control = kind == 0xB0 && data1 < Controllers::kControllers;
+    if (!on && !off && !bend && !all && !control) return;
     uint64_t now = clock_.nowUs();
     uint64_t age = static_cast<uint64_t>(ageMs) * 1000;
     uint64_t at = now - std::min(age, now);
     if (state_ == State::Armed) {
-        // A take starts at its first note or bend.
-        if (!on && !bend) return;
+        // A take starts at its first note, bend or controller.
+        if (!on && !bend && !control) return;
         startUs_ = at;
         setState(State::Recording);
     }
@@ -327,6 +340,8 @@ void Recorder::heard(uint8_t status, uint8_t data1, uint8_t data2, uint32_t ageM
         closeNote(data1, t);
     } else if (bend) {
         addBend(t, static_cast<int16_t>((data2 << 7 | data1) - 8192));
+    } else if (control) {
+        addCc(t, data1, static_cast<uint8_t>(data2 & 0x7F));
     } else {
         closeOpen(t);
     }
@@ -384,21 +399,50 @@ void Recorder::addBend(uint32_t t, int16_t v) {
     lastBend_ = b.id;
 }
 
+void Recorder::addCc(uint32_t t, uint8_t c, uint8_t v) {
+    if (CcPoint* last = lastCc_[c] ? findCc(lastCc_[c]) : nullptr) {
+        if (t >= last->t && t - last->t < kThinMs) {
+            last->v = v;
+            return;
+        }
+        if (last->v == v) return;  // a step to the value it has
+    }
+    if (clip_.ccs.size() >= kMaxCcs) {
+        full();
+        return;
+    }
+    CcPoint p;
+    p.id = nextId_++;
+    p.t = t;
+    p.c = c;
+    p.v = v;
+    auto it = std::upper_bound(clip_.ccs.begin(), clip_.ccs.end(), p,
+                               [](const CcPoint& x, const CcPoint& y) { return x.t < y.t; });
+    clip_.ccs.insert(it, p);
+    lastCc_[c] = p.id;
+}
+
+void Recorder::restartPass() {
+    lastBend_ = 0;
+    for (auto& id : lastCc_) id = 0;
+}
+
 void Recorder::full() {
     if (fullSaid_) return;
     fullSaid_ = true;
-    if (nodes.full) nodes.full->emit("the recording is full: 1024 notes or bend points");
+    if (nodes.full) nodes.full->emit("the recording is full: 1024 notes, bend points or controller points");
 }
 
 void Recorder::finishTake(uint32_t at) {
     closeOpen(at);
-    if (clip_.notes.empty() && clip_.bends.empty()) {
+    if (clip_.notes.empty() && clip_.bends.empty() && clip_.ccs.empty()) {
         dropTake();
         return;
     }
     uint32_t end = std::max<uint32_t>(at, 1);
     for (const Note& n : clip_.notes) end = std::max(end, n.t + n.d);
     for (const BendPoint& b : clip_.bends) end = std::max(end, b.t);
+    for (const CcPoint& p : clip_.ccs) end = std::max(end, p.t);
     clip_.length = std::min(end, kMaxLength);
     take_ = false;
     previous_.clear();
@@ -455,12 +499,13 @@ bool ids(JsonVariantConst v, std::vector<uint32_t>& out) {
 Check Recorder::edit(JsonVariantConst body) {
     Check c = editable();
     if (!c.isOk()) return c;
-    if (!body.is<JsonObjectConst>()) return Check::fail(Status::InvalidValue, "{remove, set, add, addBends}");
+    if (!body.is<JsonObjectConst>()) return Check::fail(Status::InvalidValue, "{remove, set, add, addBends, addCcs}");
     JsonObjectConst o = body.as<JsonObjectConst>();
     for (JsonPairConst kv : o) {
         const char* k = kv.key().c_str();
-        if (strcmp(k, "remove") && strcmp(k, "set") && strcmp(k, "add") && strcmp(k, "addBends")) {
-            return Check::fail(Status::InvalidValue, "unknown field: remove, set, add, addBends");
+        if (strcmp(k, "remove") && strcmp(k, "set") && strcmp(k, "add") && strcmp(k, "addBends") &&
+            strcmp(k, "addCcs")) {
+            return Check::fail(Status::InvalidValue, "unknown field: remove, set, add, addBends, addCcs");
         }
     }
     const int64_t maxT = kMaxLength;
@@ -469,12 +514,13 @@ Check Recorder::edit(JsonVariantConst body) {
     // client's edit) are skipped.
     std::vector<uint32_t> removed;
     if (!ids(o["remove"], removed)) return Check::fail(Status::InvalidValue, "remove: an array of ids");
-    size_t notesLeft = clip_.notes.size(), bendsLeft = clip_.bends.size();
+    size_t notesLeft = clip_.notes.size(), bendsLeft = clip_.bends.size(), ccsLeft = clip_.ccs.size();
     std::sort(removed.begin(), removed.end());
     removed.erase(std::unique(removed.begin(), removed.end()), removed.end());
     for (uint32_t id : removed) {
         if (findNote(id)) notesLeft--;
         if (findBend(id)) bendsLeft--;
+        if (findCc(id)) ccsLeft--;
     }
     JsonVariantConst sets = o["set"];
     if (!sets.isNull() && !sets.is<JsonArrayConst>()) return Check::fail(Status::InvalidValue, "set: an array");
@@ -484,8 +530,17 @@ Check Recorder::edit(JsonVariantConst body) {
         int64_t v;
         bool has;
         bool bend = findBend(e["id"].as<uint32_t>()) != nullptr;
+        bool control = findCc(e["id"].as<uint32_t>()) != nullptr;
         if (!field(e, "t", 0, maxT, v, has)) return Check::fail(Status::InvalidValue, "set: t, 0 to 14400000 ms");
-        if (bend) {
+        if (control) {
+            if (!e["d"].isNull() || !e["n"].isNull()) {
+                return Check::fail(Status::InvalidValue, "set: a controller point has t, c and v");
+            }
+            if (!field(e, "c", 0, Controllers::kControllers - 1, v, has)) {
+                return Check::fail(Status::InvalidValue, "set: c, 0 to 119");
+            }
+            if (!field(e, "v", 0, 127, v, has)) return Check::fail(Status::InvalidValue, "set: a controller, 0 to 127");
+        } else if (bend) {
             if (!e["d"].isNull() || !e["n"].isNull()) return Check::fail(Status::InvalidValue, "set: a bend point has t and v");
             if (!field(e, "v", -8192, 8191, v, has)) return Check::fail(Status::InvalidValue, "set: a bend, -8192 to 8191");
         } else {
@@ -519,8 +574,22 @@ Check Recorder::edit(JsonVariantConst body) {
         }
         bendsLeft++;
     }
+    JsonVariantConst addCcs = o["addCcs"];
+    if (!addCcs.isNull() && !addCcs.is<JsonArrayConst>()) return Check::fail(Status::InvalidValue, "addCcs: an array");
+    for (JsonVariantConst a : addCcs.as<JsonArrayConst>()) {
+        if (!a.is<JsonObjectConst>()) return Check::fail(Status::InvalidValue, "addCcs: {t, c, v}");
+        JsonObjectConst e = a.as<JsonObjectConst>();
+        int64_t v;
+        bool t, ctl, has;
+        if (!field(e, "t", 0, maxT, v, t) || !field(e, "c", 0, Controllers::kControllers - 1, v, ctl) ||
+            !field(e, "v", 0, 127, v, has) || !t || !ctl || !has) {
+            return Check::fail(Status::InvalidValue, "addCcs: {t: 0–14400000, c: 0–119, v: 0–127}");
+        }
+        ccsLeft++;
+    }
     if (notesLeft > kMaxNotes) return Check::fail(Status::TooLarge, "more than 1024 notes");
     if (bendsLeft > kMaxBends) return Check::fail(Status::TooLarge, "more than 1024 bend points");
+    if (ccsLeft > kMaxCcs) return Check::fail(Status::TooLarge, "more than 1024 controller points");
 
     // Applied.
     auto gone = [&removed](uint32_t id) { return std::binary_search(removed.begin(), removed.end(), id); };
@@ -529,6 +598,8 @@ Check Recorder::edit(JsonVariantConst body) {
     clip_.bends.erase(
         std::remove_if(clip_.bends.begin(), clip_.bends.end(), [&](const BendPoint& b) { return gone(b.id); }),
         clip_.bends.end());
+    clip_.ccs.erase(std::remove_if(clip_.ccs.begin(), clip_.ccs.end(), [&](const CcPoint& p) { return gone(p.id); }),
+                    clip_.ccs.end());
     for (JsonVariantConst s : sets.as<JsonArrayConst>()) {
         uint32_t id = s["id"].as<uint32_t>();
         if (Note* n = findNote(id)) {
@@ -539,6 +610,10 @@ Check Recorder::edit(JsonVariantConst body) {
         } else if (BendPoint* b = findBend(id)) {
             if (!s["t"].isNull()) b->t = s["t"].as<uint32_t>();
             if (!s["v"].isNull()) b->v = s["v"].as<int16_t>();
+        } else if (CcPoint* p = findCc(id)) {
+            if (!s["t"].isNull()) p->t = s["t"].as<uint32_t>();
+            if (!s["c"].isNull()) p->c = s["c"].as<uint8_t>();
+            if (!s["v"].isNull()) p->v = s["v"].as<uint8_t>();
         }
     }
     for (JsonVariantConst a : adds.as<JsonArrayConst>()) {
@@ -556,6 +631,14 @@ Check Recorder::edit(JsonVariantConst body) {
         b.t = a["t"].as<uint32_t>();
         b.v = a["v"].as<int16_t>();
         clip_.bends.push_back(b);
+    }
+    for (JsonVariantConst a : addCcs.as<JsonArrayConst>()) {
+        CcPoint p;
+        p.id = nextId_++;
+        p.t = a["t"].as<uint32_t>();
+        p.c = a["c"].as<uint8_t>();
+        p.v = a["v"].as<uint8_t>();
+        clip_.ccs.push_back(p);
     }
     clip_.sort();
     eventsDirty_ = true;
@@ -726,6 +809,7 @@ void Recorder::adopt(Clip&& c) {
     clip_ = std::move(c);
     for (Note& n : clip_.notes) n.id = nextId_++;
     for (BendPoint& b : clip_.bends) b.id = nextId_++;
+    for (CcPoint& p : clip_.ccs) p.id = nextId_++;
     eventsDirty_ = true;
     dirty_ = false;
 }
@@ -782,9 +866,17 @@ BendPoint* Recorder::findBend(uint32_t id) {
     return nullptr;
 }
 
+CcPoint* Recorder::findCc(uint32_t id) {
+    for (CcPoint& p : clip_.ccs) {
+        if (p.id == id) return &p;
+    }
+    return nullptr;
+}
+
 void Recorder::changedClip() {
     announce(nodes.notes);
     announce(nodes.bends);
+    announce(nodes.ccs);
     announce(nodes.length);
     announce(nodes.bpm);
     announce(nodes.beats);

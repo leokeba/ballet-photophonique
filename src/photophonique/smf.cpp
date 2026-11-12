@@ -12,6 +12,7 @@ void Clip::sort() {
     std::stable_sort(notes.begin(), notes.end(),
                      [](const Note& a, const Note& b) { return a.t != b.t ? a.t < b.t : a.n < b.n; });
     std::stable_sort(bends.begin(), bends.end(), [](const BendPoint& a, const BendPoint& b) { return a.t < b.t; });
+    std::stable_sort(ccs.begin(), ccs.end(), [](const CcPoint& a, const CcPoint& b) { return a.t < b.t; });
 }
 
 namespace smf {
@@ -34,7 +35,7 @@ void putVlq(std::string& s, uint32_t v) {
 
 struct Out {
     uint32_t tick;
-    uint8_t order;  // at one tick: offs, then bends, then ons, then the end marker
+    uint8_t order;  // at one tick: offs, then bends and controllers, then ons, then the end marker
     uint8_t bytes[3];
 };
 
@@ -49,7 +50,7 @@ std::string write(const Clip& clip) {
     auto tick = [ticksPerMs](uint32_t ms) { return static_cast<uint32_t>(lround(ms * ticksPerMs)); };
 
     std::vector<Out> events;
-    events.reserve(clip.notes.size() * 2 + clip.bends.size());
+    events.reserve(clip.notes.size() * 2 + clip.bends.size() + clip.ccs.size() + 1);
     for (const Note& n : clip.notes) {
         events.push_back({tick(n.t), 2, {0x90, n.n, n.v}});
         events.push_back({tick(n.t + n.d), 0, {0x80, n.n, 64}});
@@ -58,6 +59,7 @@ std::string write(const Clip& clip) {
         uint16_t v = static_cast<uint16_t>(b.v + 8192);
         events.push_back({tick(b.t), 1, {0xE0, static_cast<uint8_t>(v & 0x7F), static_cast<uint8_t>(v >> 7)}});
     }
+    for (const CcPoint& p : clip.ccs) events.push_back({tick(p.t), 1, {0xB0, p.c, p.v}});
     events.push_back({tick(clip.length), 3, {0xFF, 0x06, 3}});  // the end marker's head; its text follows
     std::stable_sort(events.begin(), events.end(), [](const Out& a, const Out& b) {
         return a.tick != b.tick ? a.tick < b.tick : a.order < b.order;
@@ -227,7 +229,7 @@ const char* read(std::string_view data, Clip& clip) {
             uint8_t b = 0;
             uint8_t kind = s & 0xF0;
             if (kind != 0xC0 && kind != 0xD0) b = tr.byte() & 0x7F;
-            if (kind == 0x80 || kind == 0x90 || kind == 0xE0 || (kind == 0xB0 && (a == 120 || a == 123))) {
+            if (kind == 0x80 || kind == 0x90 || kind == 0xE0 || (kind == 0xB0 && (a <= 120 || a == 123))) {
                 events.push_back({tick, seq++, kind, a, b, 0});
             }
         }
@@ -292,6 +294,15 @@ const char* read(std::string_view data, Clip& clip) {
                 close(e.a, at);
                 break;
             case 0xB0:
+                if (e.a < 120) {
+                    if (c.ccs.size() >= kMaxCcs) return "more than 1024 controller points";
+                    CcPoint p;
+                    p.t = at;
+                    p.c = e.a;
+                    p.v = e.b;
+                    c.ccs.push_back(p);
+                    break;
+                }
                 for (uint8_t n = 0; n < 128; n++) close(n, at);
                 break;
             case 0xE0: {
@@ -328,6 +339,7 @@ const char* read(std::string_view data, Clip& clip) {
     } else {
         for (const Note& n : c.notes) end = std::max(end, n.t + n.d);
         for (const BendPoint& b : c.bends) end = std::max(end, b.t);
+        for (const CcPoint& p : c.ccs) end = std::max(end, p.t);
     }
     c.length = end;
     if (firstTempo) {

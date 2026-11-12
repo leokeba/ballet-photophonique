@@ -125,8 +125,19 @@ void describe(Object& o, Recorder& r) {
                          .readOnly()
                          .maxSize(kMaxBends)
                          .doc("Pitch bend points: time t (ms), value v (-8192 to 8191)");
+    r.nodes.ccs = &o.list("ccs", r.clip_.ccs,
+                          [](Object& e, CcPoint& p) {
+                              e.value("id", p.id);
+                              e.value("t", p.t).unit("ms");
+                              e.value("c", p.c);
+                              e.value("v", p.v);
+                          })
+                       .readOnly()
+                       .maxSize(kMaxCcs)
+                       .doc("Controller points: time t (ms), controller c (0–119), value v (0–127) from then on");
     o.action("edit", [&r](JsonVariantConst body) { return r.edit(body); })
-        .doc("{remove: [id], set: [{id, t?, d?, n?, v?}], add: [{t, d, n, v}], addBends: [{t, v}]}")
+        .doc("{remove: [id], set: [{id, t?, d?, n?, c?, v?}], add: [{t, d, n, v}], addBends: [{t, v}], "
+             "addCcs: [{t, c, v}]}")
         .ui("hidden");
     o.action("quantize", [&r](JsonVariantConst body) { return r.quantize(body); })
         .doc("{grid: beats, ids?: [id], ends?: bool}: note starts (and ends) to the grid")

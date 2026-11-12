@@ -4,8 +4,10 @@
 //
 // - forwards a MIDI input of this computer (Web MIDI: Chrome or Edge, on a
 //   secure page such as the launcher on GitHub Pages) to /midi/send: notes,
-//   pitch bend, all notes off; one request in flight, what comes meanwhile
-//   batched, a newer bend replacing an unsent one;
+//   pitch bend, control change (every value, so the recorder keeps a knob's
+//   curve), all notes off; one request in flight, what comes meanwhile
+//   batched (up to MAX_BATCH a request), a newer bend replacing an unsent
+//   one;
 // - plays from the computer's keys, as Ableton Live does, when no MIDI input
 //   is in use (or by choice): A W S E D F T G Y H U J K O L P ; ' are an
 //   octave and a half from C, Z and X move the octave, C and V the velocity.
@@ -27,6 +29,9 @@ const W = 14; // a white key's width
 const STORE = 'x-midi:input';
 const STORE_TYPING = 'x-midi:typing';
 const LAUNCHER = 'https://leokeba.github.io/ballet-photophonique/';
+// Messages a request carries at most: [message, ms] pairs of 17 characters
+// stay under the controller's 4 KB request limit.
+const MAX_BATCH = 200;
 // The computer's keys: semitones above the octave's C, by physical position.
 const TYPING = {
   KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9,
@@ -370,9 +375,10 @@ class Midi extends HTMLElement {
       // Only the latest bend matters.
       this.#queue = this.#queue.filter((q) => (q.m & 0xf0) !== 0xe0);
       m = pack(s, d[1], d[2]);
-    } else if (t === 0xb0 && (d[1] === 120 || d[1] === 123)) {
-      this.#held.clear();
-      m = pack(s, d[1], d[2]);
+    } else if (t === 0xb0) {
+      // 120 and 123 end the notes; 0–119 are controllers (/midi/cc).
+      if (d[1] === 120 || d[1] === 123) this.#held.clear();
+      if (d[1] <= 120 || d[1] === 123) m = pack(s, d[1], d[2]);
     }
     if (m === null) return;
     const led = this.$('.led');
@@ -388,7 +394,7 @@ class Midi extends HTMLElement {
     if (this.#busy || !this.#queue.length || !this.tesser) return;
     this.#busy = true;
     const now = performance.now();
-    const batch = this.#queue.splice(0).map(({ m, at }) => {
+    const batch = this.#queue.splice(0, MAX_BATCH).map(({ m, at }) => {
       const age = Math.min(60000, Math.round(now - at));
       return age >= 1 ? [m, age] : m;
     });

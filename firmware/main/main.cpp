@@ -143,6 +143,9 @@ extern "C" void app_main() {
     // launcher's own page on GitHub Pages), onto this controller's outputs
     // and the ensemble's.
     midi.remote(&ensemble);
+    // Control change: mappings write their nodes through the API, at User
+    // level, unsaved.
+    midi.controllers.attach(api);
     api.mount("midi", midi).label("MIDI").ui("icon", "play");
     api.mount("ensemble", ensemble).label("Ensemble").ui("icon", "link");
     namespace el = photophonique::elements;
@@ -154,10 +157,12 @@ extern "C" void app_main() {
     // task, under the lock the tree's setters hold.
     // The ensemble's controllers back online get what they should be
     // playing, in the same tick.
-    dev.onTick([&api](uint32_t) {
+    // Controller mappings renew their values (deadmen) in the same tick.
+    dev.onTick([&api](uint32_t nowMs) {
         tesser::Lock lock(api);
         photophonique::defaultPwm().poll();
         ensemble.tick();
+        midi.controllers.tick(nowMs);
     });
 
     dev.cors("https://leokeba.github.io");  // the launcher, reaching the device by its address
