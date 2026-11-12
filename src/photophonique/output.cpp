@@ -61,28 +61,21 @@ void Outputs::allOff() {
 }
 
 void Output::wrote() {
-    const tesser::Client* c = api_ ? api_->currentClient() : nullptr;
-    writerLength_ = c && c->deviceLength <= sizeof(writer_) ? c->deviceLength : 0;
-    if (writerLength_) memcpy(writer_, c->device, writerLength_);
+    if (api_ && node_) api_->wrote(*node_);
 }
 
-bool Output::writtenBy(const uint8_t* device, uint8_t length) const {
-    return length && length == writerLength_ && memcmp(device, writer_, length) == 0;
-}
-
-void Outputs::trackWriters(const tesser::Api& api) {
-    for (int i = 0; i < count; i++) items[i].track(&api);
-}
-
-int Outputs::release(const uint8_t* device, uint8_t length) {
-    int n = 0;
+void Outputs::trackWriters(tesser::Api& api) {
     for (int i = 0; i < count; i++) {
-        if (!items[i].writtenBy(device, length) || !items[i].on()) continue;
-        items[i].setOn(false);
-        items[i].announce();
-        n++;
+        Output& out = items[i];
+        if (!out.node_) continue;
+        out.api_ = &api;
+        api.trackWriter(*out.node_, [this, &out](tesser::Node&, tesser::PeerLoss) {
+            if (!out.on()) return;
+            out.setOn(false);
+            out.announce();
+            released++;
+        });
     }
-    return n;
 }
 
 }  // namespace photophonique

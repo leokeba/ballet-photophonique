@@ -42,7 +42,6 @@ struct EnsembleRig {
     Rig node;
     photophonique::Midi nodeMidi{node.outputs};
     tesser::DatagramEndpoint nodeLink;
-    int released = 0;
 
     tesser::DatagramEndpoint::SendFn sender(tesser::PeerAddress from) {
         return [this, from](const tesser::PeerAddress& to, const std::string& m, tesser::Delivery) {
@@ -62,10 +61,8 @@ struct EnsembleRig {
         node.api.mount("midi", nodeMidi);
         node.outputs.trackWriters(node.api);
         nodeLink.setPeerAccess(tesser::Access::User);  // as TesserKIT's UdpApi has it
-        nodeLink.onPeerLost([this](const tesser::PeerAddress&, const tesser::PeerAddress& device) {
-            tesser::Lock lock(node.api);
-            released += node.outputs.release(device.bytes, device.length);
-        });
+        nodeLink.onPeerLost([this](const tesser::PeerAddress&, const tesser::PeerAddress& device,
+                                   tesser::PeerLoss reason) { node.api.writerLost(device, reason); });
         masterLink.mountPeers(master.api.object("peers"));
         masterLink.peerSeen(nodeMac, "stage-left", node.api.schemaHash());
         run();
@@ -271,7 +268,7 @@ TEST(ensemble_lost_master_turns_off_what_it_held) {
     }
     r.nodeLink.forgetPeer(r.masterMac);  // gone: a restart, silence, a goodbye
     r.run();
-    CHECK_EQ(r.released, 1);
+    CHECK_EQ(r.node.outputs.released, 1);
     CHECK(!r.node.out[0].on());
     CHECK(r.node.out[1].on());
     CHECK(r.node.out[2].on());

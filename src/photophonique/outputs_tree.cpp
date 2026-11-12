@@ -20,13 +20,11 @@ void describe(Object& o, Output& out) {
     out.node(&o);
     o.value("on", [&out] { return out.on(); }, [&out](bool v) {
         out.setOn(v);
-        out.wrote();
     })
         .persist()
         .doc("Off holds the output low");
     o.value("duty", [&out] { return out.duty(); }, [&out](float v) {
         out.setDuty(v);
-        out.wrote();
     })
         .range(0, 100)
         .step(0.1)
@@ -35,7 +33,6 @@ void describe(Object& o, Output& out) {
         .doc("The share of each period the output is high");
     o.value("frequency", [&out] { return out.frequency(); }, [&out](double v) {
         out.setFrequency(v);
-        out.wrote();
     })
         .range(kMinHz, kMaxHz)
         .unit("Hz")
@@ -44,7 +41,6 @@ void describe(Object& o, Output& out) {
         .ui("widget", "number");
     o.value("resolution", [&out] { return out.resolution(); }, [&out](uint8_t v) {
         out.setResolution(v);
-        out.wrote();
     })
         .range(kMinBits, kMaxBits)
         .unit("bits")

@@ -82,8 +82,8 @@ extern "C" void app_main() {
     peers.order("udp/ethernet, nowtp");
     // A master gone from every transport, or restarted: what it turned on
     // here goes off.
-    peers.onDeviceLost([](const tesser::PeerAddress& device, tesser::PeerLoss) {
-        outputs.release(device.bytes, device.length);
+    peers.onDeviceLost([](const tesser::PeerAddress& device, tesser::PeerLoss reason) {
+        dev.api().writerLost(device, reason);
     });
     // Updates from this repository's releases (.github/workflows/release.yml),
     // and from any URL.

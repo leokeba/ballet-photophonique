@@ -52,13 +52,11 @@ public:
         if (node_) node_->changed();
     }
 
-    // Who last wrote the settings through the tree: the device (its MAC)
-    // of the client whose request it was, when the transport knows it
-    // (another controller over UDP or NowTP), else nobody. So a node turns
-    // off what a lost master turned on (docs/DESIGN.md section 5.7).
+    // Settings written by code rather than a set on the output (MIDI, the
+    // recorder): the output's writer becomes the current request's client's
+    // device, or nobody (TesserAPI's Api::wrote(), once tracked:
+    // Outputs::trackWriters()). Sets on the output are seen by TesserAPI.
     void wrote();
-    bool writtenBy(const uint8_t* device, uint8_t length) const;
-    void track(const tesser::Api* api) { api_ = api; }
 
 private:
     void retime();
@@ -74,9 +72,9 @@ private:
     uint8_t resolution_ = kResolution;
     Timing timing_ = plan(kFrequency, kResolution);
     tesser::Node* node_ = nullptr;
-    const tesser::Api* api_ = nullptr;
-    uint8_t writer_[6] = {};
-    uint8_t writerLength_ = 0;
+    tesser::Api* api_ = nullptr;  // tracking its writer
+
+    friend struct Outputs;
 };
 
 // The /outputs tree (docs/DESIGN.md section 6): one object per output, named
@@ -88,12 +86,13 @@ struct Outputs {
 
     bool begin();
     void allOff();
-    // Outputs remember which device wrote them last, through `api`'s
-    // requests (Output::wrote()).
-    void trackWriters(const tesser::Api& api);
-    // Turns off the outputs `device` wrote last, and that are on: it is
-    // gone. Returns how many.
-    int release(const uint8_t* device, uint8_t length);
+    // Each output's writer is tracked by `api` (TesserAPI's trackWriter(),
+    // after the tree is described): when the device that last wrote an
+    // output is lost (api.writerLost(), from TesserKIT's
+    // peers.onDeviceLost()), the output turns off, if it is on (docs/DESIGN.md
+    // section 5.7).
+    void trackWriters(tesser::Api& api);
+    int released = 0;  // outputs turned off so
     // Output `n` (1 to count), or null.
     Output* at(int n) { return n >= 1 && n <= count ? &items[n - 1] : nullptr; }
 };
