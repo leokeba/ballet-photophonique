@@ -181,6 +181,32 @@ One controller, the **master**, plays the outputs of other controllers (its **no
 - **A node coming back** (offline, then online in the master's tick): the master sends it, in one patch, the state of every output it has played there. What was played while it was offline is dropped, not queued.
 - **Timing:** the nodes' writes leave one after the other, about a millisecond apart over Ethernet. Notes starting at the same instant everywhere (a shared clock, writes applied at a time) only if a scope shows audible skew (TesserAPI estimates two days' work).
 
+### 5.8 Playing in time on several controllers *(planned)*
+
+How the ensemble's controllers play together (Leo, 2026-11-12: to think through while control change is built; NowTP, Ethernet UDP, or both). Today (§5.7) the master streams each node its outputs' state and mappings' values as they are played, and each node applies them as they arrive.
+
+**Where skew comes from:**
+- **Sending:** the nodes' writes leave one after the other, about a millisecond apart over Ethernet.
+- **The way there:** wired UDP is about a millisecond with little jitter on a quiet switch; Wi-Fi adds tens of milliseconds and waits of about one beacon interval (102 ms, §10); NowTP is a few milliseconds, but a lost frame is resent after 100 ms. Streams merge what waits, so the state converges but a note shorter than a round trip may not sound.
+- **On the node:** UDP's task, then the API lock, which a recording's save holds for tens of milliseconds and TesserKIT's tick briefly; then the timer: a duty takes effect at the end of the output's period (§5.3).
+- **Clocks:** each board's crystal is off by tens of ppm. Nothing depends on it while the master decides everything live, but a node replaying on its own clock drifts (40 ppm is 0.6 s over 4 h), and two motors at one speed on two boards drift apart in position (40 ppm of 1000 steps/s is 144 steps an hour).
+
+**Clocks available:**
+- **NowTP's network time** (TesserKIT §5.11, `espNow.networkTimeUs()`, `localTimeUs()`, `timeSynced()`): built, NTP-style over ESP-NOW with an elected reference; between two classic ESP32s a median error of 1–40 µs, 95 % within about 120 µs. It needs NowTP on (off by default here) and the radio on every node: on a node using Ethernet, the radio runs in station mode beside it, which TesserKIT's code allows but no board has tried.
+- **Over UDP on Ethernet:** nothing yet. NTP-style exchanges over TesserAPI's UDP link (software timestamps in lwIP's task) would likely be good to a few hundred µs on a wired LAN; TesserAPI estimated a shared clock at two days' work (§9).
+- **SNTP** (TesserKIT's Time): tens of milliseconds, and needs a server: not for this.
+
+**Ways to play in time:**
+1. **On arrival** (now): skew is the network's jitter. Enough if it measures within a few milliseconds on the show's Ethernet.
+2. **At a time:** the master stamps each write with when to apply it, in network time, a lookahead `L` ahead; each node applies it then, from its player's `esp_timer`. Replay knows what comes, so it sends `L` early and loses nothing; live playing waits `L` (about 10 ms on Ethernet, 150 ms on Wi-Fi). Needs a shared clock, and writes that keep their order and times: TesserAPI's streams merge sets to one path (a note on and its off become the off), so timed writes need a stream of their own, ordered, not merged, dropped when later than their time (a TesserAPI request), and a timed queue on the node (here).
+3. **Replay on each node:** the master sends each node its part of a recording ahead of time (rendered through the key map and mappings: timed output states and node writes), and starts them all at a network time; each node replays on network time, so drift is corrected. Only the transport (start, stop, cue) crosses the network during the show, so a lost datagram can't delay a note. Live playing stays 1 or 2. The most work: a part's format, its transfer, a player on the node following network time.
+
+**Proposal:**
+- **Measure first** (Leo's decision of 2026-10-13): two controllers on Ethernet (board 2 and the board at 48:9d:31:c5:ce:48 are both GL-C-611WLs), the master replaying a take on its outputs and the node's, a scope or logic analyser on one output of each; then the same over Wi-Fi and NowTP. Without a scope: with NowTP on for its clock only, each node could note when it applied each write in network time, and the difference read from the tree.
+- **The show:** data over Ethernet UDP, as decided, and the clock from NowTP if one is needed: ESP-NOW then carries only time sync's few frames a second, never the notes.
+- **If Ethernet measures within a few milliseconds:** keep 1, nothing to build. **If not, or for Wi-Fi nodes:** 2, with TesserAPI's timed streams and NowTP's clock (a clock over UDP where a node has no radio). **3** if shows run long recordings on nodes that must stay together, or over Wi-Fi.
+- **Motors that must stay in step** (two steppers at one speed on two boards): network time also gives each node its drift from the reference, by which an output's frequency could be corrected *(later)*.
+
 ## 6. The tree
 
 Persisted nodes are marked *(p)*. Reads are public; writes to `/outputs` need `User`; TesserKIT's Auth leaves everyone Admin until an admin account exists. Nodes on the LAN reaching the tree over UDP (`/sys/udp`, on by default) are `User` without a token (TesserKIT's `peerAccess`), so they can play the outputs: the ensemble's master does (§5.7).
@@ -336,6 +362,7 @@ TesserUI's generic renderer draws `/outputs` as a card per output: a toggle, a d
 - What frequencies the show needs: the board's output stages limit how high the terminals follow (§3).
 - **Secure mode and the ensemble** (TesserKIT 38b9ce5): a controller with an admin account is in secure mode, where a peer that presents no token is Public (`/sys/udp/peerAccess` `auto`), so its master's writes are refused until the master signs in to it (`/sys/peers`, an account on each node). Open controllers, as all are now, take their master's writes as before. The launcher's offer of a first admin account (`claim` in `window.TESSER`, TesserKIT's page has it) is left out of `pages/index.html` until this is decided: one tap on it would silence a node in the ensemble.
 - **Rest values** (§5.5, Leo 2026-11-12: not sure yet): a mapping writes its `rest` on all notes off and after replay stops, and nothing by default. Should a motor's speed rest by default (a fresh mapping with `rest` 0), and should a lost master's nodes rest their mapped nodes as they turn off its outputs? Today a TesserMotion node stops by its own deadman when renewals stop; a step and direction driver on an output keeps the output's frequency.
+- **Playing in time** (§5.8): what skew the show can take (a few milliseconds of onset, for the lights; motors' speeds less), measured how (a scope, or nodes noting times in NowTP's network time), and whether NowTP's radio may run beside Ethernet for its clock alone.
 - **Room in the slot:** 59.6 KB free (§8). Silent assertions (`CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT`, as TesserKIT's full example) would give about 59 KB more, at the cost of the console's file and line on a failed assert (the core dump still has the address).
 
 ## 13. Decisions
