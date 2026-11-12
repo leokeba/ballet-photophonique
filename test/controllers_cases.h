@@ -80,16 +80,17 @@ TEST(cc_mapped_values) {
 TEST(cc_mapping_writes_a_node_unsaved) {
     MidiRig r;
     tesser::MemoryStorage storage;
-    r.api.persistence(storage, 0);
-    r.api.poll(0);
-    int saves = storage.saves;
+    r.api.persistence(storage, 100);
+    r.api.poll(10000);
     CHECK(r.set("/midi/cc/mappings",
                 R"([{"cc": 1, "path": "/outputs/2/frequency", "min": 100, "max": 1100},
                     {"cc": 1, "path": "/outputs/2/on", "threshold": 1},
                     {"cc": 2, "path": "/outputs/2/resolution", "min": 8, "max": 16}])")
               .status == tesser::Status::Ok);
-    r.api.poll(10);
-    saves = storage.saves;  // the mappings themselves are saved
+    r.api.poll(10100);
+    r.api.poll(11000);
+    CHECK(storage.saves == 1);  // the mappings themselves are saved
+    int saves = storage.saves;
     CHECK(r.send(cc(1, 127)) == "ok");
     CHECK(near(r.out[1].frequency(), 1100, 1e-9));
     CHECK(r.out[1].on());
@@ -102,7 +103,8 @@ TEST(cc_mapping_writes_a_node_unsaved) {
     CHECK(near(r.out[1].frequency(), 100, 1e-9));
     CHECK(!r.out[1].on());
     CHECK(r.midi.controllers.writes() == writes + 2);
-    r.api.poll(5000);
+    r.api.poll(12000);
+    r.api.poll(13000);
     CHECK(storage.saves == saves);  // the outputs' record isn't rewritten
     CHECK(r.midi.controllers.error().empty());
 }

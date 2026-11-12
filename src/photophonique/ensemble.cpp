@@ -105,7 +105,11 @@ Status Ensemble::write(int slot, std::string_view path, std::string_view json) {
         dropped_++;
         return Status::NotFound;
     }
-    Status s = n->stream(path, json);
+    // Not saved on the node, as a mapping's local writes aren't here: a
+    // knob moving a persisted speed would rewrite its settings every 2 s.
+    tesser::Query unsaved;
+    unsaved.persist = false;
+    Status s = n->stream(path, json, unsaved);
     if (s == Status::Ok) {
         sent_++;
     } else {

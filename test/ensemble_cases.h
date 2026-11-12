@@ -10,6 +10,7 @@
 #include "rig.h"
 #include "tesser/datagram.h"
 #include "tesser/remote.h"
+#include "tesser/storage.h"
 
 using photophonique::Ensemble;
 
@@ -130,6 +131,9 @@ TEST(ensemble_note_plays_another_controller) {
 
 TEST(ensemble_controller_mapping_writes_another_controller) {
     EnsembleRig r;
+    tesser::MemoryStorage nodeStorage;
+    r.node.api.persistence(nodeStorage, 100);
+    r.node.api.poll(10000);
     // A centred controller onto the node's output 2 duty (a stand-in for a
     // stepper's velocity), renewed, resting at the middle.
     CHECK(r.master.set("/midi/cc/mappings", R"([{"cc": 74, "slot": 1, "path": "/outputs/2/duty", "min": 0,
@@ -141,6 +145,16 @@ TEST(ensemble_controller_mapping_writes_another_controller) {
     r.play(0xB0, 74, 0);
     CHECK(near(r.node.out[1].duty(), 0, 1e-3));
     CHECK(r.midi.controllers.error().empty());
+    // The node's settings aren't rewritten for a knob.
+    for (int v = 0; v < 20; v++) r.play(0xB0, 74, v);
+    r.node.api.poll(10100);
+    r.node.api.poll(11000);
+    CHECK_EQ(nodeStorage.saves, 0);
+    // A note's patch is saved, as any write of the outputs: the rig saves.
+    r.play(0x90, 60, 100);
+    r.node.api.poll(11100);
+    r.node.api.poll(12000);
+    CHECK_EQ(nodeStorage.saves, 1);
     // Renewed from the tick, while the controller is still.
     uint32_t sent = r.ensemble.sent();
     {

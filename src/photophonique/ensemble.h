@@ -44,8 +44,9 @@ public:
     const Names& names() const override { return names_; }
     void namesNode(tesser::Node* node) override { namesNode_ = node; }
     // A controller mapping's value (controllers.h), streamed like the
-    // outputs' patches. Not resent when the controller comes back: a
-    // mapping that must hold renews it.
+    // outputs' patches but not saved on the node (TesserAPI's persist
+    // false, over the wire since 8285ae6). Not resent when the controller
+    // comes back: a mapping that must hold renews it.
     tesser::Status write(int slot, std::string_view path, std::string_view json) override;
 
     // A controller back online gets the state of the outputs played there,
