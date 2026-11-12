@@ -81,9 +81,18 @@ set_target_properties(photophonique_tests PROPERTIES CXX_STANDARD 17 CXX_STANDAR
 target_compile_options(photophonique_tests PRIVATE -Wall -Wextra -Werror -fno-exceptions -fno-rtti)
 add_test(NAME photophonique_tests COMMAND photophonique_tests)
 
+# A controller on this computer for the elements' browser tests (test/host/).
+# Its views are the firmware's (firmware/main/views.h), with TesserUI's.
+get_filename_component(TESSERUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../TesserUI" ABSOLUTE)
+add_executable(photophonique_host test/host/controller.cpp "${TESSERUI_DIR}/src/tesserui/views.cpp")
+target_include_directories(photophonique_host PRIVATE firmware/main "${TESSERUI_DIR}/src")
+target_link_libraries(photophonique_host PRIVATE photophonique_core)
+set_target_properties(photophonique_host PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_compile_options(photophonique_host PRIVATE ${PHOTOPHONIQUE_WARNINGS})
+
 if(PHOTOPHONIQUE_SANITIZE)
     # Every library in the binary, so it is instrumented alike.
-    foreach(t tesser_core photophonique_core photophonique_tests)
+    foreach(t tesser_core photophonique_core photophonique_tests photophonique_host)
         target_compile_options(${t} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g)
         target_link_options(${t} PRIVATE -fsanitize=address,undefined)
     endforeach()

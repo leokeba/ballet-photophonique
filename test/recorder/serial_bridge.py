@@ -1,19 +1,20 @@
 # The launcher on localhost with /api bridged to a controller's serial API
 # (one envelope per line, docs/DESIGN.md section 10), for testing the
 # elements without a network in common. No subscriptions: the page polls.
-# The port is opened with DTR and RTS low, so the board isn't reset.
+# The port is opened with DTR and RTS low, so the board isn't reset. A
+# pyserial URL works too: socket://127.0.0.1:8140 is test/host/controller.cpp.
 #
 #   uv run --with pyserial python test/recorder/serial_bridge.py 8131 /dev/cu.wchusbserial10 . ../TesserUI/web/dist
 #   node test/recorder/e2e_recorder.mjs http://127.0.0.1:8131 'http://127.0.0.1:8131/?api=/api&ws=' shot.png
-import http.server, json, sys, threading, time, urllib.parse, serial
+import http.server, json, os, sys, threading, time, urllib.parse, serial
 
-port, dev, repo, dist = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+port, dev, repo, dist = int(sys.argv[1]), sys.argv[2], sys.argv[3], os.path.abspath(sys.argv[4])
 files = {"/": (f"{repo}/pages/index.html", "text/html"), "/index.html": (f"{repo}/pages/index.html", "text/html"),
          "/ui.js": (f"{dist}/ui.js", "text/javascript")}
 for el in ("midi", "recorder"):
     for p in (f"/{el}.js", f"/ext/{el}.js", f"/api/ext/{el}.js"):
         files[p] = (f"{repo}/web/elements/{el}.js", "text/javascript")
-s = serial.Serial(); s.port = dev; s.baudrate = 115200; s.timeout = 0.05
+s = serial.serial_for_url(dev, do_not_open=True); s.baudrate = 115200; s.timeout = 0.05
 s.dtr = s.rts = False; s.open(); time.sleep(0.3); s.reset_input_buffer()
 lock = threading.Lock()
 ids = [0]
@@ -68,6 +69,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path in files:
             name, ctype = files[path]
             return self._send(200, ctype, open(name, "rb").read())
+        # The rest of TesserUI's build: launcher.js, the widgets' ui/ chunks.
+        local = os.path.normpath(os.path.join(dist, path.lstrip("/")))
+        if not path.startswith("/api") and local.startswith(os.path.abspath(dist)) and os.path.isfile(local):
+            ctype = {".js": "text/javascript", ".css": "text/css", ".html": "text/html"}.get(os.path.splitext(local)[1],
+                                                                                         "application/octet-stream")
+            return self._send(200, ctype, open(local, "rb").read())
         if path.startswith("/api"):
             return self._api("get")
         self._send(404, "text/plain", b"not found")

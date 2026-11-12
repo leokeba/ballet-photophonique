@@ -189,3 +189,42 @@ TEST(cc_mappings_persist) {
     CHECK(r.send(cc(74, 127)) == "ok");
     CHECK(r.midi.controllers.error().find("slot 2") == 0);
 }
+
+TEST(cc_refused_rest_is_reported) {
+    MidiRig r;
+    CHECK(r.set("/midi/cc/mappings", R"([{"cc": 74, "path": "/outputs/1/frequency", "min": 100, "max": 2000,
+                                         "rest": "0"}])")
+              .status == tesser::Status::Ok);
+    CHECK(r.send(cc(74, 127)) == "ok");
+    CHECK(r.set("/midi/off", "null").status == tesser::Status::Ok);
+    r.midi.controllers.tick(0);
+    CHECK(near(r.out[0].frequency(), 2000, 1e-6));  // 0 Hz is out of range: refused
+    CHECK_EQ(r.midi.controllers.error().substr(0, 21), std::string("/outputs/1/frequency:"));
+}
+
+TEST(cc_errors_stand_per_mapping) {
+    MidiRig r;
+    CHECK(r.set("/midi/cc/mappings", R"([{"cc": 1, "slot": 2, "path": "/stepper/velocity", "renew": 400},
+                                         {"cc": 2, "path": "/nothing/here"},
+                                         {"cc": 3, "path": "/outputs/1/duty", "max": 100}])")
+              .status == tesser::Status::Ok);
+    CHECK(r.send(cc(1, 64)) == "ok");
+    CHECK(r.midi.controllers.error().find("slot 2") == 0);
+    CHECK(r.send(cc(2, 64)) == "ok");
+    r.midi.controllers.tick(10);
+    CHECK(r.midi.controllers.error().find("/nothing/here") == 0);
+    // The slot's renewal failing again doesn't take `error` back: it is
+    // the same failure, still standing (and toasted once).
+    r.midi.controllers.tick(400);
+    r.midi.controllers.tick(800);
+    CHECK(r.midi.controllers.failures() == 4);
+    CHECK(r.midi.controllers.error().find("/nothing/here") == 0);
+    // A mapping that works again: the other failure shows.
+    CHECK(r.set("/midi/cc/mappings/1/path", "\"/outputs/2/duty\"").status == tesser::Status::Ok);
+    CHECK(r.midi.controllers.error().empty());  // changed mappings start afresh
+    CHECK(r.send(cc(2, 10)) == "ok");
+    r.midi.controllers.tick(900);
+    CHECK(r.midi.controllers.error().empty());
+    CHECK(r.send(cc(1, 10)) == "ok");
+    CHECK(r.midi.controllers.error().find("slot 2") == 0);
+}

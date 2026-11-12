@@ -49,7 +49,9 @@ await api('/recorder/length', 1500); // its end on screen
 const browser = await chromium.launch({ headless: !headed });
 const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 page.on('pageerror', (e) => check(false, 'no page error', e.message));
-page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? 'E2E renamed' : undefined));
+page.on('dialog', (d) =>
+  d.accept(d.type() !== 'prompt' ? undefined : d.message().startsWith('Controller number') ? '74' : 'E2E renamed'),
+);
 await page.addInitScript(() => {
   localStorage.setItem('x-recorder:zoom', '0.15'); // 150 px a second: the end in a narrow card
   localStorage.setItem('x-recorder:grid', '0.25'); // 1/16: 125 ms at 120 BPM
@@ -166,6 +168,37 @@ got = await until(async () => {
   return bs.length === 1 && bs[0];
 });
 check(got && got.t === 250 && got.v > 4000, 'the bend lane adds a point', JSON.stringify(got));
+
+// The lane shows a controller: "Other controller…" asks its number; a double
+// click adds a point, a drag moves it down to 0; the bend comes back.
+await rec.locator('select.lanes').selectOption('other');
+got = await until(async () => (await rec.locator('svg.keys').textContent()).includes('CC 74'));
+check(got && (await rec.locator('svg.main circle.point').count()) === 0, 'the lane shows controller 74, without the bend');
+await page.mouse.dblclick(b.x + 500 * Z + 1, b.y + lane + 10);
+got = await until(async () => {
+  const cs = await api('/recorder/ccs');
+  return cs.length === 1 && cs[0];
+});
+check(got && got.c === 74 && got.t === 500 && got.v > 100, 'a controller lane adds a point', JSON.stringify(got));
+await until(async () => (await rec.evaluate((e) => e.value.ccs[0]?.id)) > 0);
+{
+  const point = rec.locator('svg.main circle.point').first();
+  const cx = Number(await point.getAttribute('cx'));
+  const cy = Number(await point.getAttribute('cy'));
+  await page.mouse.move(b.x + cx, b.y + cy);
+  await page.mouse.down();
+  await page.mouse.move(b.x + cx + 60 * Z, b.y + lane + 40, { steps: 4 });
+  await page.mouse.move(b.x + cx + 125 * Z, b.y + lane + 63, { steps: 4 });
+  await page.mouse.up();
+}
+got = await until(async () => {
+  const cs = await api('/recorder/ccs');
+  return cs.length === 1 && cs[0].t === 625 && cs[0].v === 0 && cs[0];
+});
+check(got, 'dragging moves it on the grid, down to 0', JSON.stringify(await api('/recorder/ccs')));
+await rec.locator('select.lanes').selectOption('bend');
+got = await until(async () => (await rec.locator('svg.main circle.point').count()) === 1);
+check(got && (await rec.locator('svg.keys').textContent()).includes('Bend'), 'the pitch bend comes back');
 
 // The end's handle sets the length.
 await page.mouse.move(b.x + 1500 * Z, b.y + 10);

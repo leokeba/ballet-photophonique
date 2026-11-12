@@ -1,20 +1,22 @@
 // <x-recorder>: the recorder (docs/DESIGN.md sections 5.6 and 7). It draws
 // /recorder, {state, position, recording, loop, overdub, length, bpm, beats,
-// notes[], bends[], recordings[]}, as:
+// notes[], bends[], ccs[], recordings[]}, as:
 //
 // - a transport: the recording to work on, New, Rename, Delete; Record,
 //   Play, Stop, Loop, Overdub; the position, run on the browser's clock
 //   between the controller's announcements;
 // - a piano roll: notes coloured by their key's output (/midi/keys/outputs),
 //   a beat and bar grid at the recording's tempo, its length as a handle, a
-//   playhead, and a pitch bend lane under the notes.
+//   playhead, and a lane under the notes: the pitch bend, or a controller's
+//   points (control change), chosen in Lane and labelled with what the
+//   controller's mappings write (/midi/cc/mappings).
 //
 // Editing: click a note (shift-click adds to the selection), drag on empty
 // space to select a rectangle, Ctrl or Cmd+A selects all; drag notes to move
 // them (on the grid unless Alt is held), drag a note's right edge to resize;
 // double-click empty space for a note, a note to delete it; Delete removes
-// the selection, the arrows move it (Shift: an octave). The bend lane: drag
-// its points, double-click to add or delete one. Ctrl or Cmd+Z undoes. Each
+// the selection, the arrows move it (Shift: an octave). The lane: drag its
+// points, double-click to add or delete one. Ctrl or Cmd+Z undoes. Each
 // gesture is one /recorder/edit (split under the request limit), shown at
 // once and reconciled with what the controller announces.
 
@@ -39,6 +41,7 @@ const KEYS = 40; // the pitch column's width
 const MAX_BODY = 3500; // under TesserAPI's 4 KB request limit
 const STORE_GRID = 'x-recorder:grid';
 const STORE_ZOOM = 'x-recorder:zoom';
+const BEND = 'bend'; // the lane showing the pitch bend; a number shows that controller
 
 const noteName = (n) => `${NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -66,18 +69,20 @@ const gridChoice = local(STORE_GRID);
 const zoomChoice = local(STORE_ZOOM);
 
 class Recorder extends HTMLElement {
-  #value = { notes: [], bends: [], recordings: [] };
+  #value = { notes: [], bends: [], ccs: [], recordings: [] };
   #schema = null;
   #disabled = false;
-  #selected = new Set(); // note and bend point ids (one id space)
+  #selected = new Set(); // note, bend and controller point ids (one id space)
   #preview = null; // id → {t, d, n} or {t, v}, during a drag
   #drag = null;
   #marquee = null; // {x0, y0, x1, y1}
-  #undo = []; // earlier {notes, bends}
+  #undo = []; // earlier {notes, bends, ccs}
   #zoom = 0.1; // px per ms
   #grid = 1 / 4; // beats, 0 off
   #velocity = 100;
   #outputs = []; // each note's output, from /midi/keys/outputs
+  #mappings = []; // /midi/cc/mappings, to name the controllers
+  #lane = BEND; // what the lane shows: BEND, or a controller number
   #range = [48, 84]; // pitches shown, low and high
   #base = { pos: 0, at: 0 }; // the announced position, and when it came
   #raf = 0;
@@ -151,6 +156,7 @@ class Recorder extends HTMLElement {
         <label>Grid <select class="grid"></select></label>
         <button class="quantize" title="The selection's starts (or every note's) to the grid">Quantize</button>
         <label>Velocity <input class="vel" type="number" min="1" max="127" step="1"></label>
+        <label>Lane <select class="lanes" title="What the lane under the notes shows"></select></label>
         <span class="sep"></span>
         <button class="zout" title="Zoom out (Ctrl or Cmd and the wheel)">−</button>
         <button class="zin" title="Zoom in">+</button>
@@ -160,7 +166,7 @@ class Recorder extends HTMLElement {
         <svg class="keys" width="${KEYS}"></svg>
         <div class="scroll"><svg class="main"></svg></div>
       </div>
-      <div class="hint">Double-click for a note, drag to move, its right edge to resize; Delete removes, arrows move, Shift-click or drag to select. The lane under the notes is the pitch bend.</div>`;
+      <div class="hint">Double-click for a note, drag to move, its right edge to resize; Delete removes, arrows move, Shift-click or drag to select. The lane under the notes is the pitch bend or a controller (Lane).</div>`;
     const $ = (s) => this.shadowRoot.querySelector(s);
     this.$ = $;
     const grid = $('.grid');
@@ -189,6 +195,7 @@ class Recorder extends HTMLElement {
     });
     $('.quantize').addEventListener('click', () => this.#quantize());
     $('.vel').addEventListener('change', (e) => this.#setVelocity(+e.target.value));
+    $('.lanes').addEventListener('change', (e) => this.#chooseLane(e.target.value));
     $('.zin').addEventListener('click', () => this.#zoomBy(1.5));
     $('.zout').addEventListener('click', () => this.#zoomBy(1 / 1.5));
     $('.undo').addEventListener('click', () => this.#undoLast());
@@ -224,7 +231,7 @@ class Recorder extends HTMLElement {
   set value(v) {
     if (!v || typeof v !== 'object') return;
     const was = this.#value;
-    this.#value = { notes: [], bends: [], recordings: [], ...v };
+    this.#value = { notes: [], bends: [], ccs: [], recordings: [], ...v };
     if (v.position !== was.position || v.state !== was.state || v.recording !== was.recording) {
       this.#base = { pos: v.position ?? 0, at: performance.now() };
     }
@@ -265,11 +272,36 @@ class Recorder extends HTMLElement {
   #fetchOutputs() {
     try {
       const o = this.tesser?.get('/midi/keys/outputs');
+      const m = this.tesser?.get('/midi/cc/mappings');
+      let changed = false;
       if (Array.isArray(o)) {
         this.#outputs = o;
-        this.#paint();
+        changed = true;
       }
+      if (Array.isArray(m)) {
+        this.#mappings = m;
+        changed = true;
+      }
+      if (changed) this.#paint();
     } catch {}
+  }
+
+  // The lane: the bend, or a controller; "other" asks for its number.
+  #chooseLane(value) {
+    if (value === 'other') {
+      const c = Number(prompt('Controller number (0–119)', '1'));
+      if (Number.isInteger(c) && c >= 0 && c <= 119) this.#lane = c;
+    } else {
+      this.#lane = value === BEND ? BEND : Number(value);
+    }
+    this.#selected.clear();
+    this.#paint();
+  }
+
+  #laneName(c) {
+    const m = this.#mappings.filter((x) => x.cc === c && x.path);
+    const to = m.map((x) => (x.slot ? `${x.slot}·${x.path}` : x.path)).join(', ');
+    return to ? `CC ${c} · ${to}` : `CC ${c}`;
   }
 
   #create() {
@@ -309,7 +341,8 @@ class Recorder extends HTMLElement {
   }
 
   #remember() {
-    this.#undo.push({ notes: this.#value.notes.map((n) => ({ ...n })), bends: this.#value.bends.map((b) => ({ ...b })) });
+    const copy = (a) => a.map((x) => ({ ...x }));
+    this.#undo.push({ notes: copy(this.#value.notes), bends: copy(this.#value.bends), ccs: copy(this.#value.ccs) });
     if (this.#undo.length > 30) this.#undo.shift();
   }
 
@@ -320,9 +353,10 @@ class Recorder extends HTMLElement {
     this.#selected.clear();
     this.#edit(
       {
-        remove: [...this.#value.notes.map((n) => n.id), ...this.#value.bends.map((b) => b.id)],
+        remove: [...this.#value.notes, ...this.#value.bends, ...this.#value.ccs].map((x) => x.id),
         add: last.notes.map(({ t, d, n, v }) => ({ t, d, n, v })),
         addBends: last.bends.map(({ t, v }) => ({ t, v })),
+        addCcs: last.ccs.map(({ t, c, v }) => ({ t, c, v })),
       },
       false,
     );
@@ -332,13 +366,19 @@ class Recorder extends HTMLElement {
     const gone = new Set(edit.remove ?? []);
     let notes = this.#value.notes.filter((n) => !gone.has(n.id)).map((n) => ({ ...n }));
     let bends = this.#value.bends.filter((b) => !gone.has(b.id)).map((b) => ({ ...b }));
-    for (const s of edit.set ?? []) Object.assign(notes.find((n) => n.id === s.id) ?? bends.find((b) => b.id === s.id) ?? {}, s);
+    let ccs = this.#value.ccs.filter((p) => !gone.has(p.id)).map((p) => ({ ...p }));
+    for (const s of edit.set ?? []) {
+      const x = notes.find((n) => n.id === s.id) ?? bends.find((b) => b.id === s.id) ?? ccs.find((p) => p.id === s.id);
+      Object.assign(x ?? {}, s);
+    }
     // Ids the controller will give; until then, none to select.
     for (const a of edit.add ?? []) notes.push({ id: -1, v: 100, ...a });
     for (const a of edit.addBends ?? []) bends.push({ id: -1, ...a });
+    for (const a of edit.addCcs ?? []) ccs.push({ id: -1, ...a });
     notes = notes.sort((a, b) => a.t - b.t || a.n - b.n);
     bends = bends.sort((a, b) => a.t - b.t);
-    this.#value = { ...this.#value, notes, bends };
+    ccs = ccs.sort((a, b) => a.t - b.t);
+    this.#value = { ...this.#value, notes, bends, ccs };
   }
 
   *#split(edit) {
@@ -348,7 +388,7 @@ class Recorder extends HTMLElement {
     }
     let piece = {};
     let size = 2;
-    for (const key of ['remove', 'set', 'add', 'addBends']) {
+    for (const key of ['remove', 'set', 'add', 'addBends', 'addCcs']) {
       for (const item of edit[key] ?? []) {
         const n = JSON.stringify(item).length + 1;
         if (size + n + key.length + 4 > MAX_BODY && Object.keys(piece).length) {
@@ -410,6 +450,17 @@ class Recorder extends HTMLElement {
   #bendAt(y) {
     return clamp(Math.round(((this.#laneTop + LANE / 2 - y) / (LANE / 2 - 5)) * 8192), -8192, 8191);
   }
+  // The lane's value at a height, and back: the bend, or a controller (0–127).
+  #laneY(v) {
+    return this.#lane === BEND ? this.#bendY(v) : this.#laneTop + LANE - 5 - (v / 127) * (LANE - 10);
+  }
+  #laneAt(y) {
+    if (this.#lane === BEND) return this.#bendAt(y);
+    return clamp(Math.round(((this.#laneTop + LANE - 5 - y) / (LANE - 10)) * 127), 0, 127);
+  }
+  get #laneRange() {
+    return this.#lane === BEND ? [-8192, 8191] : [0, 127];
+  }
   #point(e) {
     const r = this.$('.main').getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
@@ -447,6 +498,16 @@ class Recorder extends HTMLElement {
     const p = this.#preview;
     return p ? this.#value.bends.map((b) => (p.has(b.id) ? { ...b, ...p.get(b.id) } : b)) : this.#value.bends;
   }
+  // The lane's points, as drawn.
+  #points() {
+    if (this.#lane === BEND) return this.#bends();
+    const p = this.#preview;
+    const mine = this.#value.ccs.filter((x) => x.c === this.#lane);
+    return p ? mine.map((x) => (p.has(x.id) ? { ...x, ...p.get(x.id) } : x)) : mine;
+  }
+  #lanePoints() {
+    return this.#lane === BEND ? this.#value.bends : this.#value.ccs.filter((x) => x.c === this.#lane);
+  }
   #selectedNotes() {
     return this.#value.notes.filter((n) => this.#selected.has(n.id));
   }
@@ -458,8 +519,8 @@ class Recorder extends HTMLElement {
     const length = this.#value.length ?? 0;
     if (this.#value.recording && y < RULER && Math.abs(x - length * z) <= 8) return { end: true };
     if (y >= this.#laneTop) {
-      const b = this.#bends().findLast((p) => Math.hypot(p.t * z - x, this.#bendY(p.v) - y) <= 6);
-      return b ? { id: b.id, bend: true } : null;
+      const b = this.#points().findLast((p) => Math.hypot(p.t * z - x, this.#laneY(p.v) - y) <= 6);
+      return b ? { id: b.id, lane: true } : null;
     }
     const n = this.#notes().findLast((q) => {
       const nx = q.t * z;
@@ -494,7 +555,7 @@ class Recorder extends HTMLElement {
       this.#drag = { kind: 'length', x, length: this.#value.length };
     } else if (target && target.id >= 0) {
       const id = target.id;
-      const bend = target.bend;
+      const lane = target.lane;
       if (e.shiftKey) {
         this.#selected.has(id) ? this.#selected.delete(id) : this.#selected.add(id);
       } else if (!this.#selected.has(id)) {
@@ -504,9 +565,10 @@ class Recorder extends HTMLElement {
         this.#paint();
         return;
       }
-      if (bend) {
-        const items = this.#value.bends.filter((b) => this.#selected.has(b.id));
-        this.#drag = { kind: 'bend', x, y, anchor: this.#value.bends.find((b) => b.id === id), items };
+      if (lane) {
+        const points = this.#lanePoints();
+        const items = points.filter((b) => this.#selected.has(b.id));
+        this.#drag = { kind: 'lane', x, y, anchor: points.find((b) => b.id === id), items };
       } else {
         const items = this.#selectedNotes();
         this.#drag = { kind: target.edge ? 'resize' : 'move', x, y, anchor: this.#value.notes.find((n) => n.id === id), items };
@@ -543,12 +605,13 @@ class Recorder extends HTMLElement {
       const dd = end - (d.anchor.t + d.anchor.d);
       const least = this.#stepMs && !free ? Math.round(this.#stepMs) : 1;
       this.#preview = new Map(d.items.map((n) => [n.id, { d: Math.max(least, n.d + dd) }]));
-    } else if (d.kind === 'bend') {
+    } else if (d.kind === 'lane') {
       const t = this.#snap(d.anchor.t + dms, free);
       const minT = Math.min(...d.items.map((b) => b.t));
       const dt = Math.max(t - d.anchor.t, -minT);
-      const dv = this.#bendAt(y) - this.#bendAt(d.y);
-      this.#preview = new Map(d.items.map((b) => [b.id, { t: b.t + dt, v: clamp(b.v + dv, -8192, 8191) }]));
+      const dv = this.#laneAt(y) - this.#laneAt(d.y);
+      const [lo, hi] = this.#laneRange;
+      this.#preview = new Map(d.items.map((b) => [b.id, { t: b.t + dt, v: clamp(b.v + dv, lo, hi) }]));
     } else if (d.kind === 'marquee') {
       this.#marquee = { ...this.#marquee, x1: x, y1: y };
       const [x0, x1] = [Math.min(this.#marquee.x0, x), Math.max(this.#marquee.x0, x)];
@@ -559,9 +622,9 @@ class Recorder extends HTMLElement {
         const ny = this.#y(n.n);
         if (nx < x1 && nx + Math.max(2, n.d * this.#zoom) > x0 && ny < y1 && ny + ROW > y0) sel.add(n.id);
       }
-      for (const b of this.#value.bends) {
+      for (const b of this.#lanePoints()) {
         const bx = b.t * this.#zoom;
-        const by = this.#bendY(b.v);
+        const by = this.#laneY(b.v);
         if (bx >= x0 && bx <= x1 && by >= y0 && by <= y1) sel.add(b.id);
       }
       this.#selected = sel;
@@ -585,7 +648,7 @@ class Recorder extends HTMLElement {
     } else if (preview && d.moved) {
       const set = [];
       for (const [id, p] of preview) {
-        const was = [...this.#value.notes, ...this.#value.bends].find((x) => x.id === id);
+        const was = [...this.#value.notes, ...this.#value.bends, ...this.#value.ccs].find((x) => x.id === id);
         const changed = Object.fromEntries(Object.entries(p).filter(([k, v]) => was?.[k] !== v));
         if (Object.keys(changed).length) set.push({ id, ...changed });
       }
@@ -615,7 +678,8 @@ class Recorder extends HTMLElement {
     const s = this.#stepMs;
     const t = s && !e.altKey ? Math.floor(x / this.#zoom / s) * s : x / this.#zoom;
     if (y >= this.#laneTop && y <= this.#height) {
-      this.#edit({ addBends: [{ t: Math.round(t), v: this.#bendAt(y) }] });
+      const v = this.#laneAt(y);
+      this.#edit(this.#lane === BEND ? { addBends: [{ t: Math.round(t), v }] } : { addCcs: [{ t: Math.round(t), c: this.#lane, v }] });
     } else if (y >= RULER && y < RULER + this.#notesH) {
       const d = Math.round(s || this.#beatMs / 2);
       this.#edit({ add: [{ t: Math.round(t), d, n: this.#pitchAt(y), v: this.#velocity }] });
@@ -715,16 +779,28 @@ class Recorder extends HTMLElement {
       const sel = this.#selectedNotes();
       $('.vel').value = String(sel.length && sel.every((n) => n.v === sel[0].v) ? sel[0].v : this.#velocity);
     }
+    // The lane's choices: the bend, the controllers this recording uses or
+    // that have mappings, the one shown, and any other.
+    const used = new Set([...v.ccs.map((p) => p.c), ...this.#mappings.filter((m) => m.path).map((m) => m.cc)]);
+    if (this.#lane !== BEND) used.add(this.#lane);
+    const lanes = [[BEND, 'Pitch bend'], ...[...used].sort((a, b) => a - b).map((c) => [String(c), this.#laneName(c)]), ['other', 'Other controller…']];
+    const select = $('.lanes');
+    if (select.options.length !== lanes.length || lanes.some(([val, text], i) => select.options[i].value !== val || select.options[i].text !== text)) {
+      select.innerHTML = '';
+      for (const [val, text] of lanes) select.append(new Option(text, val));
+    }
+    select.value = String(this.#lane);
+    select.disabled = off || !has;
     this.#draw();
   }
 
   #draw() {
     const v = this.#value;
     const notes = this.#notes();
-    const bends = this.#bends();
+    const points = this.#points();
     const z = this.#zoom;
     const length = this.#drag?.kind === 'length' && this.#drag.to ? this.#drag.to : v.length ?? 0;
-    const end = Math.max(length, ...notes.map((n) => n.t + n.d), ...bends.map((b) => b.t), this.#position());
+    const end = Math.max(length, ...notes.map((n) => n.t + n.d), ...v.bends.map((b) => b.t), ...v.ccs.map((p) => p.t), this.#position());
     const view = (this.$('.scroll').clientWidth || 600) / z;
     const width = Math.ceil(Math.max(end + 2 * this.#beatMs, view) * z);
     const height = this.#height;
@@ -755,7 +831,9 @@ class Recorder extends HTMLElement {
         }
       }
     }
-    out.push(`<line class="centre" x1="0" y1="${this.#bendY(0)}" x2="${width}" y2="${this.#bendY(0)}"/>`);
+    // The lane's middle: the bend's centre, a centred controller's 64.
+    const mid = this.#laneY(this.#lane === BEND ? 0 : 64);
+    out.push(`<line class="centre" x1="0" y1="${mid}" x2="${width}" y2="${mid}"/>`);
     // Past the length: shaded.
     if (length > 0) out.push(`<rect class="past" x="${length * z}" y="${RULER}" width="${Math.max(0, width - length * z)}" height="${height - RULER}"/>`);
 
@@ -770,15 +848,18 @@ class Recorder extends HTMLElement {
       );
     }
 
-    // Bend: each value held until the next point, the centre before the first.
-    if (bends.length) {
-      let d = `M0 ${this.#bendY(0)}`;
-      for (const b of bends) d += ` H${b.t * z} V${this.#bendY(b.v)}`;
+    // The lane: each value held until the next point; before the first, the
+    // bend's centre, or a controller's first value (as replay plays it).
+    if (points.length) {
+      const bend = this.#lane === BEND;
+      let d = `M0 ${this.#laneY(bend ? 0 : points[0].v)}`;
+      for (const b of points) d += ` H${b.t * z} V${this.#laneY(b.v)}`;
       d += ` H${width}`;
       out.push(`<path class="bendline" d="${d}"/>`);
-      for (const b of bends) {
+      for (const b of points) {
+        const label = bend ? (b.v / 8192).toFixed(2) : b.v;
         out.push(
-          `<circle class="point${this.#selected.has(b.id) ? ' sel' : ''}" data-id="${b.id}" data-kind="b" cx="${b.t * z}" cy="${this.#bendY(b.v)}" r="4"><title>${time(b.t)} · ${(b.v / 8192).toFixed(2)}</title></circle>`,
+          `<circle class="point${this.#selected.has(b.id) ? ' sel' : ''}" data-id="${b.id}" data-kind="b" cx="${b.t * z}" cy="${this.#laneY(b.v)}" r="4"><title>${time(b.t)} · ${label}</title></circle>`,
         );
       }
     }
@@ -806,7 +887,7 @@ class Recorder extends HTMLElement {
       if (BLACK.has(n % 12)) keys.push(`<rect class="blackrow" x="0" y="${y}" width="${KEYS}" height="${ROW}"/>`);
       if (n % 12 === 0) keys.push(`<text x="3" y="${y + ROW - 1.5}">${noteName(n)}</text>`);
     }
-    keys.push(`<text x="3" y="${this.#laneTop + 12}">Bend</text>`);
+    keys.push(`<text x="3" y="${this.#laneTop + 12}">${this.#lane === BEND ? 'Bend' : `CC ${this.#lane}`}</text>`);
     const k = this.$('.keys');
     k.setAttribute('height', height);
     k.innerHTML = keys.join('');

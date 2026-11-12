@@ -79,7 +79,12 @@ public:
     int last() const { return last_; }
     uint32_t writes() const { return writes_; }
     uint32_t failures() const { return failures_; }
-    const std::string& error() const { return error_; }
+    // The latest failure still standing: a mapping whose last write failed
+    // (none once the mappings change).
+    const std::string& error() {
+        sync();
+        return error_;
+    }
 
     // The tree's nodes, announced when they change.
     struct Nodes {
@@ -94,7 +99,9 @@ public:
 private:
     void write(size_t i, const std::string& json);
     Kind kindOf(const CcMapping& m) const;
-    void failed(const std::string& error);
+    // A write's outcome: "" or why it failed, for mapping `i` as of
+    // `generation`.
+    void result(size_t i, uint32_t generation, const std::string& error);
     void sync();  // `sent_` follows `mappings`
 
     tesser::Api* api_ = nullptr;
@@ -105,6 +112,7 @@ private:
     struct Sent {
         std::string json;  // "" none yet
         uint32_t atMs = 0;
+        std::string error;  // why its last write failed, "" if it didn't
     };
     std::vector<Sent> sent_;
     uint32_t generation_ = 0;  // the mappings' node, as of sent_

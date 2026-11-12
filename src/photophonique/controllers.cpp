@@ -84,6 +84,10 @@ void Controllers::sync() {
     // Mappings changed: each writes again at its controller's next move.
     sent_.assign(mappings.size(), Sent());
     generation_ = g;
+    if (!error_.empty()) {
+        error_.clear();
+        if (nodes.error) nodes.error->changed();
+    }
 }
 
 void Controllers::moved(uint8_t cc, uint8_t value) {
@@ -132,13 +136,11 @@ void Controllers::write(size_t i, const std::string& json) {
     writes_++;
     if (m.slot) {
         Status s = remote_ ? remote_->write(m.slot, m.path, json) : Status::NotFound;
-        if (s == Status::Ok) {
-            if (error_.rfind("slot " + std::to_string(m.slot) + " ", 0) == 0) failed("");
-            return;
-        }
-        failures_++;
-        failed("slot " + std::to_string(m.slot) + " " + m.path + ": " +
-               (s == Status::NotFound ? "no controller" : s == Status::Timeout ? "offline" : tesser::toString(s)));
+        result(i, generation_, s == Status::Ok ? std::string()
+                                               : "slot " + std::to_string(m.slot) + " " + m.path + ": " +
+                                                     (s == Status::NotFound  ? "no controller"
+                                                      : s == Status::Timeout ? "offline"
+                                                                             : tesser::toString(s)));
         return;
     }
     if (!client_) return;
@@ -147,23 +149,36 @@ void Controllers::write(size_t i, const std::string& json) {
     // settings every 2 s for as long as it moves (TesserKIT's mappings).
     unsaved.persist = false;
     std::string path = m.path;
-    client_->set(path, json, [this, path](Status s, JsonVariantConst body) {
-        if (s == Status::Ok) {
-            if (error_.compare(0, path.size() + 1, path + ":") == 0) failed("");
-            return;
+    uint32_t generation = generation_;
+    client_->set(path, json, [this, i, generation, path](Status s, JsonVariantConst body) {
+        std::string e;
+        if (s != Status::Ok) {
+            e = path + ": " + tesser::toString(s);
+            if (const char* msg = body["message"]) e = e + ": " + msg;
         }
-        failures_++;
-        std::string e = path + ": " + tesser::toString(s);
-        if (const char* msg = body["message"]) e = e + ": " + msg;
-        failed(e);
+        result(i, generation, e);
     }, unsaved);
 }
 
-void Controllers::failed(const std::string& error) {
-    if (error == error_) return;
-    error_ = error;
-    if (nodes.error) nodes.error->changed();
+void Controllers::result(size_t i, uint32_t generation, const std::string& error) {
+    if (!error.empty()) failures_++;
+    // A reply for mappings since changed: counted, not shown.
+    if (generation != generation_ || i >= sent_.size()) return;
+    std::string& was = sent_[i].error;
+    if (error == was) return;
+    // A mapping starting to fail toasts once; renewals failing again don't.
     if (!error.empty() && nodes.refused) nodes.refused->emit(error);
+    was = error;
+    // `error`: the latest failure still standing.
+    std::string shown = error;
+    if (shown.empty()) {
+        for (const Sent& x : sent_) {
+            if (!x.error.empty()) shown = x.error;
+        }
+    }
+    if (shown == error_) return;
+    error_ = shown;
+    if (nodes.error) nodes.error->changed();
 }
 
 namespace {
