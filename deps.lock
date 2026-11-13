@@ -4,7 +4,7 @@
 # One owner/repo@sha per line, TesserKIT's own deps.lock for the ones it
 # shares. Update it with scripts/pin.sh, after the siblings' commits are
 # pushed, and commit it with the change that needs them.
-leokeba/TesserAPI@5a991e4fbeaac17831cb87fa134591ff041383cd
+leokeba/TesserAPI@2d6ee68801563762d0998c7caf706b1a130e0a3a
 leokeba/TesserUI@e2dcc48ce153f43851d4d438fdf1002e8a2a3545
 leokeba/NowTP@d0af51bb59968aebb1756d999940ac795e051554
-leokeba/TesserKIT@4dafe71d70338670f4a06fd838e3c93ad513b0d4
+leokeba/TesserKIT@7425872e7b4d071d3111070064a730a601f01b5f
