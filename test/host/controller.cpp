@@ -156,9 +156,17 @@ int main(int argc, char** argv) {
         }
         uint64_t now = nowUs();
         uint32_t ms = static_cast<uint32_t>((now - start) / 1000);
-        tesser::Lock lock(api);
-        recorder.poll();  // every millisecond: what is due plays within one
-        midi.controllers.tick(ms);
-        api.poll(ms);
+        Recorder::SaveJob job;
+        {
+            tesser::Lock lock(api);
+            recorder.poll(&job);  // every millisecond: what is due plays within one
+            midi.controllers.tick(ms);
+            api.poll(ms);
+        }
+        if (job.pending) {  // the autosave's file, without the lock, as the firmware's player
+            bool written = recorder.writeSave(job);
+            tesser::Lock lock(api);
+            recorder.endSave(job, written);
+        }
     }
 }

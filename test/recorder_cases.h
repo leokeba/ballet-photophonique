@@ -571,3 +571,35 @@ TEST(recorder_fills_up) {
     r.call("/recorder/stop");
     CHECK(r.files.files.count("Take 1") == 1);
 }
+
+TEST(recorder_saves_outside_the_lock) {
+    RecRig r;
+    r.call("/recorder/new", "\"x\"");
+    CHECK_EQ(r.call("/recorder/edit", R"({"addCcs": [{"t": 1, "c": 1, "v": 5}]})"), "ok");
+    // Due: the save is taken under the lock, not written.
+    r.clock.us += Recorder::kSaveDelayMs * 1000ull;
+    Recorder::SaveJob job;
+    CHECK(r.rec.poll(&job) == 0);
+    CHECK(job.pending);
+    CHECK_EQ(job.name, std::string("x"));
+    Clip before;
+    CHECK(smf::read(r.files.files["x"], before) == nullptr);
+    CHECK_EQ(before.ccs.size(), 0u);  // the file has what it had
+    // While it's written, what touches that name waits (Busy), so the write
+    // can't bring back a removed or renamed file.
+    CHECK(r.rec.rename("x", "y").status == tesser::Status::Busy);
+    CHECK(r.rec.remove("x").status == tesser::Status::Busy);
+    CHECK(r.rec.store("x", smf::write(Clip())).status == tesser::Status::Busy);
+    // An edit made meanwhile is saved after the write, not lost.
+    CHECK_EQ(r.call("/recorder/edit", R"({"addCcs": [{"t": 2, "c": 2, "v": 9}]})"), "ok");
+    CHECK(r.rec.writeSave(job));
+    r.rec.endSave(job, true);
+    Clip written;
+    CHECK(smf::read(r.files.files["x"], written) == nullptr);
+    CHECK_EQ(written.ccs.size(), 1u);  // the snapshot
+    r.run(Recorder::kSaveDelayMs);
+    Clip later;
+    CHECK(smf::read(r.files.files["x"], later) == nullptr);
+    CHECK_EQ(later.ccs.size(), 2u);  // the edit, saved after its delay
+    CHECK(r.rec.rename("x", "y").isOk());  // free again once written
+}

@@ -9,6 +9,15 @@
 
 namespace photophonique {
 
+namespace {
+
+// Refused while the recording is being written outside the API lock.
+tesser::Check busy() {
+    return tesser::Check::fail(tesser::Status::Busy, "the recording is being saved: try again");
+}
+
+}  // namespace
+
 using tesser::Check;
 using tesser::Status;
 
@@ -136,6 +145,7 @@ Check Recorder::choose(const std::string& name) {
     }
     if (name == name_ && !take_) return Check::ok();
     if (!name.empty() && !exists(name)) return Check::fail(Status::NotFound, "no such recording");
+    if (writing(name_) && dirty_) return busy();
     stop();
     flush();
     if (name.empty()) {
@@ -188,7 +198,7 @@ void Recorder::startPass(uint64_t nowUs) {
     setPosition(0);
 }
 
-uint64_t Recorder::poll() {
+uint64_t Recorder::poll(SaveJob* job) {
     uint64_t now = clock_.nowUs();
     uint64_t wait = kIdle;
     if (replaying_) wait = playDue(now);
@@ -203,7 +213,11 @@ uint64_t Recorder::poll() {
     if (dirty_ && !recording_()) {
         uint64_t due = dirtyAtUs_ + kSaveDelayMs * 1000ull;
         if (now >= due) {
-            save();
+            if (job) {
+                if (beginSave(*job)) return 0;
+            } else {
+                save();
+            }
         } else {
             wait = std::min<uint64_t>(wait, due - now);
         }
@@ -724,6 +738,7 @@ Check Recorder::create(const std::string& name) {
     Check c = checkName(name);
     if (!c.isOk()) return c;
     if (exists(name)) return Check::fail(Status::InvalidValue, "a recording has that name");
+    if (writing(name_) && dirty_) return busy();
     stop();
     flush();
     Clip clip;
@@ -743,6 +758,7 @@ Check Recorder::rename(const std::string& from, const std::string& to) {
     if (!c.isOk()) return c;
     if (from == to) return Check::ok();
     if (exists(to)) return Check::fail(Status::InvalidValue, "a recording has that name");
+    if (writing(from) || writing(to)) return busy();
     if (from == name_) flush();
     if (!files_.rename(from, to)) return Check::fail(Status::Internal, "the file couldn't be renamed");
     if (from == name_ && !take_) {
@@ -754,6 +770,7 @@ Check Recorder::rename(const std::string& from, const std::string& to) {
 }
 
 Check Recorder::remove(const std::string& name) {
+    if (writing(name)) return busy();
     if (name == name_ && !take_) {
         stop();
         dirty_ = false;
@@ -772,6 +789,7 @@ Check Recorder::remove(const std::string& name) {
 Check Recorder::store(const std::string& name, std::string_view data) {
     Check c = checkName(name);
     if (!c.isOk()) return c;
+    if (writing(name)) return busy();
     Clip clip;
     if (const char* why = smf::read(data, clip)) return Check::fail(Status::InvalidValue, why);
     bool current = name == name_ && !take_;
@@ -815,11 +833,29 @@ void Recorder::adopt(Clip&& c) {
 }
 
 void Recorder::save() {
-    dirty_ = false;
-    if (name_.empty() || take_) return;
-    if (!files_.write(name_, smf::write(clip_))) {
-        tesser::logWarning("photophonique: recording \"%s\" couldn't be saved", name_.c_str());
+    SaveJob job;
+    if (beginSave(job)) endSave(job, writeSave(job));
+}
+
+bool Recorder::beginSave(SaveJob& job) {
+    if (writing(name_)) {
+        dirty_ = true;  // saved once that write has ended
+        return false;
     }
+    dirty_ = false;
+    if (name_.empty() || take_) return false;
+    job.name = name_;
+    job.data = smf::write(clip_);
+    job.pending = true;
+    saving_ = name_;
+    return true;
+}
+
+bool Recorder::writeSave(const SaveJob& job) { return files_.write(job.name, job.data); }
+
+void Recorder::endSave(const SaveJob& job, bool written) {
+    saving_.clear();
+    if (!written) tesser::logWarning("photophonique: recording \"%s\" couldn't be saved", job.name.c_str());
     refreshEntries();
 }
 

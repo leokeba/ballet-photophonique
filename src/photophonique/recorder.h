@@ -80,10 +80,26 @@ public:
     const std::string& recording() const { return name_; }
     tesser::Check choose(const std::string& name);
 
+    // A save taken under the API lock and written outside it (docs/DESIGN.md
+    // section 5.6): the file's name and its bytes, from beginSave().
+    struct SaveJob {
+        std::string name;
+        std::string data;
+        bool pending = false;
+    };
+
     // Plays what is due and saves a recording edited kSaveDelayMs ago, from
     // the player's task under the API lock. Returns the microseconds until
-    // it should run again, or kIdle until wake().
-    uint64_t poll();
+    // it should run again, or kIdle until wake(). With `job`, a due save is
+    // taken into it instead of written: job.pending is set, the caller writes
+    // it with writeSave() outside the lock, then calls endSave() under the
+    // lock, and polls again (the return is 0).
+    uint64_t poll(SaveJob* job = nullptr);
+    // The file's write, from the player's task outside the API lock (the
+    // files are thread-safe). Returns whether it was written.
+    bool writeSave(const SaveJob& job);
+    // The write's end, under the API lock.
+    void endSave(const SaveJob& job, bool written);
 
     // Edits of the current recording (docs/DESIGN.md section 6: `edit`,
     // `quantize`), refused while recording.
@@ -160,6 +176,13 @@ private:
     tesser::Check load(const std::string& name);
     void adopt(Clip&& c);  // ids given
     void save();
+    // Under the lock: copies the current recording into `job` when it has
+    // edits to save and isn't being recorded. False when there's nothing to
+    // write now (an edit of a recording being written is saved after it).
+    bool beginSave(SaveJob& job);
+    // Whether `name` is being written outside the lock: file operations on
+    // it wait (Busy), so the write can't bring back a removed or renamed file.
+    bool writing(const std::string& name) const { return !saving_.empty() && name == saving_; }
     void flush();
     void markDirty();
     void refreshEntries();
@@ -205,6 +228,7 @@ private:
 
     bool dirty_ = false;
     uint64_t dirtyAtUs_ = 0;
+    std::string saving_;  // the name a job is being written under, "" none
 };
 
 // The /recorder tree (docs/DESIGN.md section 6): api.mount("recorder", recorder).

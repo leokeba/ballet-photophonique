@@ -42,9 +42,18 @@ void run(void* arg) {
     EspClock& c = clock();
     for (;;) {
         uint64_t wait;
+        Recorder::SaveJob job;
         {
             tesser::Lock lock(*p->api);
-            wait = p->recorder->poll();
+            wait = p->recorder->poll(&job);
+        }
+        if (job.pending) {
+            // The autosave's file, written without the API lock (DESIGN 5.6):
+            // timed writes don't wait for it.
+            bool written = p->recorder->writeSave(job);
+            tesser::Lock lock(*p->api);
+            p->recorder->endSave(job, written);
+            continue;
         }
         esp_timer_stop(c.timer);  // not running: an error, ignored
         if (wait == 0) continue;
