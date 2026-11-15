@@ -85,6 +85,10 @@ extern "C" void app_main() {
     // advertise the same group. /sys/peers/group changes it; empty mounts
     // every TesserAPI node, as before (TesserKIT 7425872).
     peers.group("ballet");
+    // A master lost for less than 6 s isn't released: over UDP its route
+    // waits for its 5 s probe before its writes go again (TesserKIT 3ee0134,
+    // DESIGN 9). /sys/peers/grace changes it.
+    peers.grace(6000);
     // A master gone from every transport, or restarted: what it turned on
     // here goes off.
     peers.onDeviceLost([](const tesser::PeerAddress& device, tesser::PeerLoss reason) {
