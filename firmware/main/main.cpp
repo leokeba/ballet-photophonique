@@ -70,9 +70,9 @@ extern "C" void app_main() {
     net.ethernet(tesserkit::boards::gledopto());
     timekeeper.defaultTz("CET-1CEST,M3.5.0,M10.5.0/3");  // Paris
     // The ensemble (DESIGN 5.7): the controllers by UDP over Ethernet for the
-    // show, by NowTP for testing (off until turned on), each streamed to by
-    // a master with nine slots.
-    espNow.enable(false).mountPeers(true).maxCalls(10);
+    // show, by NowTP otherwise — on by default, the primary way Leo configures
+    // the boards — each streamed to by a master with nine slots.
+    espNow.mountPeers(true).maxCalls(10);
     // A node handles its master's writes in UDP's own task: in TesserKIT's
     // (its default since v0.1.14) they wait about 10 ms more.
     udp.maxCalls(10).ownTask(true);
